@@ -549,7 +549,7 @@ function vOC(){
       ${slot('factura','Paso 2','Factura','Lo que te facturan / envían.')}
       ${slot('packing','Paso 3','Packing List','Lo realmente embarcado.')}
     </div>
-    ${!r.hasPed?`<div class="note" style="margin-top:18px"><span class="ni">${ICON.info}</span><div>Sube primero el <b>pedido/confirmación</b> para poder calcular el backorder. La factura y el packing los adjuntas después.</div></div>`:''}
+    ${(!r.hasPed&&r.hasFac&&r.hasPak)?`<div class="note" style="margin-top:18px"><span class="ni">${ICON.info}</span><div>Sin <b>pedido</b> cargado no se calcula el backorder del pedido, pero ya puedes usar <b>Factura vs Packing</b> (botón arriba) para ver qué te facturaron de más respecto a lo que llegó.</div></div>`:(!r.hasPed?`<div class="note" style="margin-top:18px"><span class="ni">${ICON.info}</span><div>Sube primero el <b>pedido/confirmación</b> para calcular el backorder. La factura y el packing los adjuntas después.</div></div>`:'')}
     ${r.unknowns.length?`<div class="note" style="margin-top:14px"><span class="ni">${ICON.info}</span><div><b>${r.unknowns.length} código(s) sin equivalencia.</b> Mapéalos en <a href="#" id="goEquiv" style="color:var(--link)">Equivalencias</a> para que coincidan con tu código SAP.</div></div>`:''}
     ${r.hasPed?`
     <div class="grid4" style="margin:20px 0 8px">

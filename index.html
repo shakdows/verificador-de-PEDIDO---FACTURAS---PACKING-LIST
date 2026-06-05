@@ -186,6 +186,22 @@ details.panel summary::-webkit-details-marker{display:none}
 .addcard:hover{border-color:var(--cat);color:var(--link);background:#fffaf0}
 .addcard svg{width:22px;height:22px}
 
+/* ---------- modal visor de documento ---------- */
+.modal-bg{position:fixed;inset:0;background:rgba(16,24,40,.5);display:flex;align-items:center;justify-content:center;z-index:200;padding:24px}
+.modal{background:var(--panel);border:1px solid var(--line);border-radius:16px;box-shadow:0 30px 80px -30px rgba(16,24,40,.6);width:min(780px,100%);max-height:86vh;display:flex;flex-direction:column;overflow:hidden}
+.modal .mh{padding:18px 22px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:flex-start;gap:14px}
+.modal .mh h3{font:800 17px/1.2 var(--disp);margin:0 0 4px;color:var(--ink)}
+.modal .mh .sub{font-size:12px;color:var(--ink2);font-family:var(--mono);word-break:break-all}
+.modal .mb{overflow:auto}
+.modal .mf{padding:14px 22px;border-top:1px solid var(--line);display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.modal .mf .grow{flex:1}
+.xbtn{all:unset;cursor:pointer;color:var(--ink3);padding:6px;border-radius:8px;line-height:0;flex:none}
+.xbtn:hover{background:var(--panel2);color:var(--ink)}
+.xbtn svg{width:18px;height:18px}
+
+.frow{display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--line)}
+.frow:last-child{border-bottom:0}
+.frow .fn{flex:1;font-family:var(--mono);font-size:12px;color:var(--ink);word-break:break-all}
 </style>
 </head>
 <body>
@@ -322,7 +338,7 @@ async function readPDF(file){
 /* ============================================================
    ESTADO
    ============================================================ */
-let state = { view:'prov', prov:[], crossref:[], ops:[], curProvId:null, cur:null };
+let state = { view:'prov', prov:[], crossref:[], ops:[], curProvId:null, cur:null, queue:[] };
 function newOp(provId){
   const p = state.prov.find(x=>x.id===provId);
   return { id:'op_'+Date.now(), provId, provName:p?p.name:'', ref:'',
@@ -474,12 +490,13 @@ function vOC(){
   const op=state.cur; if(!op){state.view='prov';return render();}
   const p=state.prov.find(x=>x.id===op.provId);
   const r=ocReport(op);
-  const slot=(key,tag,title,hint)=>{const doc=op.docs[key]; const done=!!doc;
-    return `<div class="slot ${done?'done':''}" data-slot="${key}">
+  const slot=(key,tag,title,hint)=>{const doc=op.docs[key]; const files=doc&&doc.files?doc.files:[]; const done=files.length>0;
+    return `<div class="slot ${done?'done':''}">
       <div class="ic">${done?ICON.check:ICON.doc}</div>
       <div class="tag">${tag}</div><h3>${title}</h3>
-      ${done?`<div class="file">${esc(doc.fileName)}</div><div class="cnt">${doc.items.length} líneas · <a href="#" data-edit="${key}" style="color:var(--link)">revisar</a> · <a href="#" data-clear="${key}" style="color:var(--ink3)">quitar</a></div>`:`<div class="hint">${hint}</div>`}
-      <input type="file" accept=".xlsx,.xls,.csv,.pdf" data-up="${key}">
+      ${done
+        ? `<div class="file">${files.length} archivo${files.length>1?'s':''} · ${doc.items.length} líneas</div><div class="cnt"><a href="#" data-view="${key}" style="color:var(--link)">ver / descargar</a> · <a href="#" data-add="${key}" style="color:var(--link)">+ archivo</a> · <a href="#" data-clear="${key}" style="color:var(--ink3)">quitar todo</a></div>`
+        : `<div class="hint">${hint}</div><input type="file" multiple accept=".xlsx,.xls,.csv,.pdf" data-up="${key}">`}
     </div>`;};
   const backRows=r.rows.filter(x=>x.back>0);
   const pedidas=r.rows.filter(x=>x.qP>0).length;
@@ -527,38 +544,65 @@ function vOC(){
     </tbody></table></div>`:''}`;
   bindCrumb();
   main.querySelectorAll('[data-up]').forEach(inp=>{const s=inp.closest('.slot');
-    inp.onchange=e=>handleFile(inp.dataset.up,e.target.files[0]);
+    inp.onchange=e=>handleFiles(inp.dataset.up,e.target.files);
     s.ondragover=e=>{e.preventDefault();s.classList.add('drag');};
     s.ondragleave=()=>s.classList.remove('drag');
-    s.ondrop=e=>{e.preventDefault();s.classList.remove('drag');if(e.dataTransfer.files[0])handleFile(inp.dataset.up,e.dataTransfer.files[0]);};});
-  main.querySelectorAll('[data-edit]').forEach(a=>a.onclick=e=>{e.preventDefault();openReview(a.dataset.edit);});
-  main.querySelectorAll('[data-clear]').forEach(a=>a.onclick=async e=>{e.preventDefault(); op.docs[a.dataset.clear]=null; await DB.put('ops',op); render();});
+    s.ondrop=e=>{e.preventDefault();s.classList.remove('drag');if(e.dataTransfer.files.length)handleFiles(inp.dataset.up,e.dataTransfer.files);};});
+  main.querySelectorAll('[data-add]').forEach(a=>a.onclick=e=>{e.preventDefault();addMore(a.dataset.add);});
+  main.querySelectorAll('[data-view]').forEach(a=>a.onclick=e=>{e.preventDefault();viewDoc(a.dataset.view);});
+  main.querySelectorAll('[data-clear]').forEach(a=>a.onclick=async e=>{e.preventDefault(); if(confirm('¿Quitar todos los archivos de esta casilla?')){op.docs[a.dataset.clear]=null; await DB.put('ops',op); render();}});
   main.querySelectorAll('[data-map]').forEach(x=>x.onclick=e=>{e.preventDefault();quickMap(op.provId,x.dataset.map);});
   const ge=$('#goEquiv'); if(ge)ge.onclick=e=>{e.preventDefault();state.view='equiv';render();};
   const ex=$('#exp'); if(ex)ex.onclick=()=>exportOC(op,r);
 }
 
-/* ---------- carga de archivos ---------- */
-async function handleFile(key,file){ if(!file)return; toast('Leyendo '+file.name+'…');
-  try{ const isPdf=/\.pdf$/i.test(file.name); const parsed=isPdf?await readPDF(file):await readExcel(file);
-    state.cur.docs[key]={fileName:file.name,items:[],_parsed:parsed}; if(parsed.costex)toast('Formato COSTEX detectado'); openReview(key);
-  }catch(err){console.error(err);toast('No se pudo leer el archivo');}
+/* ---------- carga de MÚLTIPLES archivos por casilla ---------- */
+function fileToB64(file){return new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result);r.onerror=rej;r.readAsDataURL(file);});}
+const DOC_LABELS={cotizacion:'Pedido / Confirmación',factura:'Factura',packing:'Packing List'};
+function handleFiles(key, fileList){
+  const arr=[...fileList]; if(!arr.length)return;
+  arr.forEach(f=>state.queue.push({key,file:f}));
+  startNext();
+}
+function addMore(key){
+  const i=document.createElement('input'); i.type='file'; i.multiple=true; i.accept='.xlsx,.xls,.csv,.pdf';
+  i.onchange=e=>handleFiles(key,e.target.files); i.click();
+}
+function addFileToSlot(key, fileObj){
+  const d = state.cur.docs[key] || {files:[], items:[]};
+  d.files.push(fileObj);
+  d.items = d.files.flatMap(f=>f.items);
+  state.cur.docs[key]=d;
+}
+function recompute(key){ const d=state.cur.docs[key]; if(d) d.items=d.files.flatMap(f=>f.items); }
+async function startNext(){
+  if(!state.queue.length){ state.view='oc'; render(); return; }
+  const {key,file}=state.queue.shift();
+  toast('Leyendo '+file.name+'…');
+  try{
+    const isPdf=/\.pdf$/i.test(file.name);
+    const parsed=isPdf?await readPDF(file):await readExcel(file);
+    const raw=await fileToB64(file);
+    if(parsed.costex)toast('Formato COSTEX detectado');
+    const label=file.name+' — '+DOC_LABELS[key];
+    reviewParsed(parsed,label,
+      async(items)=>{ addFileToSlot(key,{fileName:file.name,mime:file.type||'',raw,items}); await DB.put('ops',state.cur); toast(items.length+' líneas añadidas'); startNext(); },
+      ()=>{ startNext(); });
+  }catch(err){ console.error(err); toast('No se pudo leer '+file.name); startNext(); }
 }
 
 /* ---------- revisión / mapeo ---------- */
 let reviewMap={code:-1,desc:-1,qty:-1,price:-1}, reviewHeaderRow=0;
 function guessCol(headers,opts){for(let i=0;i<headers.length;i++){const h=String(headers[i]).toLowerCase();if(opts.some(o=>h.includes(o)))return i;}return -1;}
-function openReview(key){
-  const doc=state.cur.docs[key]; const labels={cotizacion:'Pedido / Confirmación',factura:'Factura',packing:'Packing List'};
-  if(doc._parsed && doc._parsed.kind==='excel') renderExcelReview(key,doc._parsed,labels[key]);
-  else if(doc._parsed && doc._parsed.kind==='pdf') renderPdfReview(key,doc._parsed,labels[key]);
-  else renderItemsEdit(key,labels[key]); // doc ya confirmado: editar líneas existentes
+function reviewParsed(parsed,label,onConfirm,onCancel){
+  if(parsed.kind==='excel') renderExcelReview(parsed,label,onConfirm,onCancel);
+  else renderPdfReview(parsed,label,onConfirm,onCancel);
 }
-function renderExcelReview(key,parsed,label){
+function renderExcelReview(parsed,label,onConfirm,onCancel){
   const rows=parsed.rows; let hr=0;
   for(let i=0;i<Math.min(rows.length,15);i++){if(rows[i].filter(c=>String(c).trim()).length>=3){hr=i;break;}}
   reviewHeaderRow=hr; const headers=rows[hr]||[];
-  reviewMap={code:guessCol(headers,['codigo','code','parte','part','item','sku','nro','n°']),
+  reviewMap={code:guessCol(headers,['codigo','code','parte','part','item','sku','nro','n°','ctp']),
     desc:guessCol(headers,['descrip','desc','detalle','nombre','articulo','product']),
     qty:guessCol(headers,['cant','qty','quantity','unid','und','pcs']),
     price:guessCol(headers,['precio','price','unit','valor','costo'])};
@@ -566,8 +610,8 @@ function renderExcelReview(key,parsed,label){
   const sel=f=>`<select class="t" data-map="${f}"><option value="-1">— ninguna —</option>${colOpts.map((o,i)=>`<option value="${i}" ${reviewMap[f]===i?'selected':''}>${o}</option>`).join('')}</select>`;
   const preview=rows.slice(hr,hr+40);
   main.innerHTML=`
-    <div class="head"><div class="kicker">Revisión · ${label}</div><h2>Mapea las columnas</h2>
-      <p>Indica qué columna del Excel corresponde a cada campo. Encabezado detectado en la fila ${hr+1}.</p></div>
+    <div class="head"><div class="kicker">Revisión · ${esc(label)}</div><h2>Mapea las columnas</h2>
+      <p>Indica qué columna corresponde a cada campo. Encabezado detectado en la fila ${hr+1}.</p></div>
     <div class="panel" style="margin-bottom:16px">
       <div class="mapbar">
         <div><label class="f">Código *</label>${sel('code')}</div><div><label class="f">Descripción</label>${sel('desc')}</div>
@@ -578,33 +622,33 @@ function renderExcelReview(key,parsed,label){
     <div class="tblwrap"><table class="tbl"><thead><tr>${headers.map((h,i)=>`<th>${i}<br>${esc(String(h).slice(0,18))}</th>`).join('')}</tr></thead>
     <tbody>${preview.slice(1).map(rw=>`<tr>${headers.map((_,i)=>`<td>${esc(String(rw[i]??'').slice(0,28))}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
   main.querySelectorAll('[data-map]').forEach(s=>s.onchange=e=>reviewMap[e.target.dataset.map]=Number(e.target.value));
-  $('#cancelRev').onclick=()=>{state.cur.docs[key]=null;state.view='oc';render();};
-  $('#confirmExcel').onclick=async()=>{
+  $('#cancelRev').onclick=()=>onCancel();
+  $('#confirmExcel').onclick=()=>{
     if(reviewMap.code<0||reviewMap.qty<0){toast('Asigna al menos Código y Cantidad');return;}
     const items=[]; rows.slice(reviewHeaderRow+1).forEach(rw=>{const code=String(rw[reviewMap.code]??'').trim(); if(!code)return;
       items.push({code, desc:reviewMap.desc>=0?String(rw[reviewMap.desc]??''):'', qty:reviewMap.qty>=0?(parseFloat(String(rw[reviewMap.qty]).replace(',','.'))||0):0, price:reviewMap.price>=0?(parseFloat(String(rw[reviewMap.price]).replace(',','.'))||null):null});});
-    state.cur.docs[key].items=items; delete state.cur.docs[key]._parsed; await DB.put('ops',state.cur);
-    toast(items.length+' líneas confirmadas'); state.view='oc'; render();};
+    if(!items.length){toast('No se detectaron líneas con código');return;}
+    onConfirm(items);};
 }
-function renderPdfReview(key,parsed,label){
+function renderPdfReview(parsed,label,onConfirm,onCancel){
   const init=parsed.guess.filter(g=>g.code).map(g=>({code:g.code,desc:(g.desc||'').slice(0,60),qty:g.qty||''}));
   const rows=init.length?init:[{code:'',desc:'',qty:''}];
   const pos=[...new Set(parsed.guess.map(g=>g.po).filter(Boolean))];
   const sub = parsed.costex
     ? `Formato <b>COSTEX</b> detectado: ${init.length} líneas leídas automáticamente (Qty · Part No · Description).${pos.length?' Pedido(s): <b>'+pos.map(esc).join(', ')+'</b>.':''} Revisa y confirma.`
     : `Lectura aproximada del PDF. Corrige códigos y escribe las cantidades.`;
-  buildGrid(key,label,rows,sub,
-    `<details class="panel"><summary class="muted small" style="cursor:pointer">Ver texto crudo extraído (${parsed.rows.length} líneas)</summary><pre style="white-space:pre-wrap;font-family:var(--mono);font-size:11px;color:var(--ink2);max-height:300px;overflow:auto;margin-top:12px">${esc(parsed.rows.join('\n'))}</pre></details>`);
+  buildGrid(label,rows,sub,
+    `<details class="panel"><summary class="muted small" style="cursor:pointer">Ver texto crudo extraído (${parsed.rows.length} líneas)</summary><pre style="white-space:pre-wrap;font-family:var(--mono);font-size:11px;color:var(--ink2);max-height:300px;overflow:auto;margin-top:12px">${esc(parsed.rows.join('\n'))}</pre></details>`,
+    onConfirm,onCancel);
 }
-function renderItemsEdit(key,label){
-  const rows=state.cur.docs[key].items.map(i=>({code:i.code,desc:i.desc||'',qty:i.qty}));
-  buildGrid(key,label,rows.length?rows:[{code:'',desc:'',qty:''}],`Edita las líneas guardadas de este documento.`,'');
+function renderItemsEdit(items,label,onConfirm,onCancel){
+  const rows=items.map(i=>({code:i.code,desc:i.desc||'',qty:i.qty}));
+  buildGrid(label,rows.length?rows:[{code:'',desc:'',qty:''}],`Edita las líneas guardadas.`,'',onConfirm,onCancel);
 }
-function buildGrid(key,label,rows,subtitle,extra){
-  state.cur.docs[key]._edit=rows;
+function buildGrid(label,rows,subtitle,extra,onConfirm,onCancel){
   const grid=()=>`<table class="tbl editgrid"><thead><tr><th style="width:170px">Código</th><th>Descripción</th><th style="width:110px">Cantidad</th><th style="width:40px"></th></tr></thead><tbody id="pgrid">${rows.map((r,i)=>pdfRow(r,i)).join('')}</tbody></table>`;
   main.innerHTML=`
-    <div class="head"><div class="kicker">Revisión · ${label}</div><h2>Confirma las líneas</h2><p>${subtitle}</p></div>
+    <div class="head"><div class="kicker">Revisión · ${esc(label)}</div><h2>Confirma las líneas</h2><p>${subtitle}</p></div>
     <div class="panel" style="margin-bottom:16px">
       <div class="tblwrap" style="max-height:420px">${grid()}</div>
       <div class="row" style="margin-top:14px"><button class="btn ghost sm" id="addRow">＋ Fila</button><div style="flex:1"></div>
@@ -615,11 +659,10 @@ function buildGrid(key,label,rows,subtitle,extra){
   const refresh=()=>{$('#pgrid').innerHTML=rows.map((r,i)=>pdfRow(r,i)).join('');bind();};
   bind();
   $('#addRow').onclick=()=>{rows.push({code:'',desc:'',qty:''});refresh();};
-  $('#cancelRev').onclick=()=>{ if(!state.cur.docs[key].items.length) state.cur.docs[key]=null; else {delete state.cur.docs[key]._parsed; delete state.cur.docs[key]._edit;} state.view='oc';render();};
-  $('#confirmGrid').onclick=async()=>{const items=rows.filter(r=>String(r.code).trim()).map(r=>({code:r.code.trim(),desc:r.desc,qty:parseFloat(String(r.qty).replace(',','.'))||0,price:null}));
+  $('#cancelRev').onclick=()=>onCancel();
+  $('#confirmGrid').onclick=()=>{const items=rows.filter(r=>String(r.code).trim()).map(r=>({code:r.code.trim(),desc:r.desc,qty:parseFloat(String(r.qty).replace(',','.'))||0,price:null}));
     if(!items.length){toast('Agrega al menos una línea con código');return;}
-    state.cur.docs[key].items=items; delete state.cur.docs[key]._parsed; delete state.cur.docs[key]._edit; await DB.put('ops',state.cur);
-    toast(items.length+' líneas confirmadas'); state.view='oc'; render();};
+    onConfirm(items);};
 }
 function pdfRow(r,i){return `<tr>
   <td><input class="codecol" data-i="${i}" data-f="code" value="${esc(r.code)}"></td>
@@ -631,6 +674,67 @@ function quickMap(provId,alien){
   const canonical=prompt(`Código "${alien}" del proveedor equivale a tu código SAP/internacional:\n(escribe el código base, ej. 2390559 o 1R0750)`);
   if(!canonical)return; const c={id:'cr_'+Date.now(),provId,alien:Codes.norm(alien),canonical:Codes.split(Codes.norm(canonical)).base};
   state.crossref.push(c); DB.put('crossref',c); toast('Equivalencia guardada'); render();
+}
+
+/* ---------- VISOR DE DOCUMENTO ---------- */
+function closeModal(){ const m=document.getElementById('modalRoot'); if(m)m.remove(); }
+function openModal(inner){
+  closeModal();
+  const bg=document.createElement('div'); bg.className='modal-bg'; bg.id='modalRoot';
+  bg.innerHTML=`<div class="modal">${inner}</div>`;
+  bg.onclick=e=>{ if(e.target===bg) closeModal(); };
+  document.body.appendChild(bg); return bg;
+}
+function viewDoc(key){
+  const op=state.cur; const doc=op.docs[key]; if(!doc||!doc.files||!doc.files.length)return;
+  const files=doc.files;
+  const hasPrice = doc.items.some(it=>it.price!=null && it.price!=='');
+  const filesList = `<div style="padding:14px 22px;border-bottom:1px solid var(--line)">
+    <div class="f" style="margin-bottom:9px">Archivos (${files.length})</div>
+    ${files.map((f,i)=>`<div class="frow">
+      <div class="fn">${esc(f.fileName)}<span class="muted small"> · ${f.items.length} líneas</span></div>
+      ${f.raw?`<button class="btn ghost sm" data-fdl="${i}">⬇ Original</button>`:''}
+      <button class="btn ghost sm" data-fed="${i}">Editar</button>
+      <button class="btn ghost sm" data-fx="${i}">✕</button>
+    </div>`).join('')}
+  </div>`;
+  const body = `<div class="mb">${filesList}<div class="tblwrap" style="border:0;border-radius:0;box-shadow:none;max-height:48vh">
+    <table class="tbl"><thead><tr><th style="width:40px">#</th><th>Código</th><th>Descripción</th><th class="num">Cantidad</th>${hasPrice?'<th class="num">Precio</th>':''}</tr></thead>
+    <tbody>${doc.items.map((it,i)=>`<tr><td class="muted">${i+1}</td><td class="code">${esc(it.code)}</td><td>${esc(it.desc||'')}</td><td class="num">${it.qty}</td>${hasPrice?`<td class="num">${it.price==null||it.price===''?'—':it.price}</td>`:''}</tr>`).join('')}</tbody></table>
+  </div></div>`;
+  const inner = `
+    <div class="mh">
+      <div><h3>${DOC_LABELS[key]}</h3><div class="sub">${files.length} archivo${files.length>1?'s':''} · ${doc.items.length} líneas combinadas</div></div>
+      <button class="xbtn" id="mClose"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
+    ${body}
+    <div class="mf">
+      <button class="btn primary sm" id="dlXlsx">⬇ Excel (combinado)</button>
+      <button class="btn ghost sm" id="addMoreM">+ agregar archivo</button>
+      <div class="grow"></div>
+      <button class="btn ghost sm" id="mClose2">Cerrar</button>
+    </div>`;
+  openModal(inner);
+  document.getElementById('mClose').onclick=closeModal;
+  document.getElementById('mClose2').onclick=closeModal;
+  document.getElementById('dlXlsx').onclick=()=>docToExcel(doc,op,key,DOC_LABELS[key]);
+  document.getElementById('addMoreM').onclick=()=>{closeModal();addMore(key);};
+  document.querySelectorAll('#modalRoot [data-fdl]').forEach(b=>b.onclick=()=>{const f=files[+b.dataset.fdl];const a=document.createElement('a');a.href=f.raw;a.download=f.fileName;a.click();});
+  document.querySelectorAll('#modalRoot [data-fed]').forEach(b=>b.onclick=()=>{const idx=+b.dataset.fed;closeModal();editFile(key,idx);});
+  document.querySelectorAll('#modalRoot [data-fx]').forEach(b=>b.onclick=async()=>{const idx=+b.dataset.fx; if(!confirm('¿Quitar este archivo?'))return; doc.files.splice(idx,1); if(!doc.files.length){op.docs[key]=null; await DB.put('ops',op); closeModal(); render(); return;} recompute(key); await DB.put('ops',op); viewDoc(key);});
+}
+function editFile(key,idx){
+  const op=state.cur; const f=op.docs[key].files[idx]; if(!f)return;
+  renderItemsEdit(f.items, f.fileName+' — '+DOC_LABELS[key],
+    async(items)=>{ f.items=items; recompute(key); await DB.put('ops',op); toast('Líneas actualizadas'); state.view='oc'; render(); },
+    ()=>{ state.view='oc'; render(); });
+}
+function docToExcel(doc,op,key,label){
+  const hasPrice = doc.items.some(it=>it.price!=null && it.price!=='');
+  const head = hasPrice?['Codigo','Descripcion','Cantidad','Precio']:['Codigo','Descripcion','Cantidad'];
+  const aoa=[head]; doc.items.forEach(it=>aoa.push(hasPrice?[it.code,it.desc||'',it.qty,it.price==null?'':it.price]:[it.code,it.desc||'',it.qty]));
+  const wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(aoa),(label||'Documento').slice(0,28));
+  XLSX.writeFile(wb,`${(op.ref||'OC')}_${key}`.replace(/[^\w\-]/g,'_')+'.xlsx');
 }
 
 /* ---------- REPORTES ---------- */
@@ -692,6 +796,7 @@ $('#nav').addEventListener('click',e=>{const b=e.target.closest('button');if(!b)
   state.prov=await DB.all('prov');
   state.crossref=await DB.all('crossref');
   state.ops=(await DB.all('ops')).sort((a,b)=>b.id.localeCompare(a.id));
+  state.ops.forEach(o=>{ if(o.docs) for(const k of ['cotizacion','factura','packing']){ const d=o.docs[k]; if(d && !d.files){ o.docs[k]={files:[{fileName:d.fileName||'archivo',mime:d.mime||'',raw:d.raw||null,items:d.items||[]}], items:d.items||[]}; } } });
   render();
 })();
 </script>

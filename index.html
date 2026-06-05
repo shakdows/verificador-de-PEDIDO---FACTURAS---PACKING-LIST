@@ -433,7 +433,7 @@ function ocReport(op){
       if(qF>qK){status='Falta en packing';sev='bad';}
       else if(qK>qF){status='De más en packing';sev='warn';}
       else if(qF>0){status='Fact = packing';sev='ok';}
-      else {status='—';sev='mut';}
+      else {status='Backorder';sev='mut';}
     } else if(qF>0){status='Extra (no pedido)';sev='warn';}
     else {status='—';sev='mut';}
     const packDiff = (hasFac&&hasPak&&qF!==qK);
@@ -554,7 +554,7 @@ function vOC(){
     ${crumb([{t:'Proveedores',go:'prov'},{t:p?p.name:'',go:'provDetail'},{t:op.ref||'OC'}])}
     <div class="head between">
       <div><div class="kicker">${esc(p?p.name:'')} · ${op.fecha}</div><h2>${esc(op.ref||'Orden de compra')}</h2></div>
-      <div class="row">${(r.hasFac&&r.hasPak)?`<button class="btn ghost sm" id="fvp">Factura vs Packing</button>`:''}${r.hasPed?`<button class="btn primary sm" id="exp">⬇ Exportar Excel</button>`:''}</div>
+      <div class="row">${(r.hasPed||r.hasFac||r.hasPak)?`<button class="btn ghost sm" id="recalc">↻ Recalcular</button>`:''}${(r.hasFac&&r.hasPak)?`<button class="btn ghost sm" id="fvp">Factura vs Packing</button>`:''}${r.hasPed?`<button class="btn primary sm" id="exp">⬇ Exportar Excel</button>`:''}</div>
     </div>
     <div class="grid3" style="margin-bottom:8px">
       ${slot('cotizacion','Paso 1','Pedido / Confirmación','Lo que ordenaste. Excel o PDF.')}
@@ -615,10 +615,47 @@ function vOC(){
   const ge=$('#goEquiv'); if(ge)ge.onclick=e=>{e.preventDefault();state.view='equiv';render();};
   const ex=$('#exp'); if(ex)ex.onclick=()=>exportOC(op,r);
   const fvp=$('#fvp'); if(fvp)fvp.onclick=()=>claimView(op,r);
+  const rc=$('#recalc'); if(rc)rc.onclick=()=>recalcOp(op);
   main.querySelectorAll('th.sortable').forEach(th=>th.onclick=()=>{ const c=th.dataset.sort; if(state.ocSort.col===c)state.ocSort.dir*=-1; else {state.ocSort.col=c; state.ocSort.dir=1;} render(); });
 }
 
 /* ---------- carga de MÚLTIPLES archivos por casilla ---------- */
+function b64ToFile(dataURL, name){
+  return fetch(dataURL).then(r=>r.blob()).then(b=>new File([b], name, {type:b.type||''}));
+}
+async function recalcOp(op){
+  toast('Recalculando con el lector actual…');
+  let changed=0, pdfs=0;
+  for(const key of ['cotizacion','factura','packing']){
+    const d=op.docs?op.docs[key]:null; if(!d||!d.files) continue;
+    for(const f of d.files){
+      const isPdf=/\.pdf$/i.test(f.fileName||'')||/pdf/i.test(f.mime||'');
+      if(!isPdf || !f.raw) continue;
+      pdfs++;
+      try{
+        const file=await b64ToFile(f.raw, f.fileName||'archivo.pdf');
+        const parsed=await readPDF(file);
+        // Solo re-escribimos automáticamente facturas/packings COSTEX (parser determinístico).
+        if(parsed.costexKind!=='invoice' && parsed.costexKind!=='packing') continue;
+        const items=(parsed.guess||[]).filter(g=>g.code).map(g=>{
+          const o={code:String(g.code).trim(),desc:(g.desc||'').slice(0,60),
+            qty:parseFloat(String(g.qty).replace(',','.'))||0,
+            price:(g.price!=null&&g.price!==''?(parseFloat(String(g.price).replace(',','.'))||null):null)};
+          if(g.ordered!=null&&g.ordered!=='')o.ordered=parseFloat(String(g.ordered).replace(',','.'))||0;
+          if(g.bo!=null&&g.bo!=='')o.bo=parseFloat(String(g.bo).replace(',','.'))||0;
+          return o;
+        });
+        f.items=items;
+        const dp=[...new Set((parsed.guess||[]).map(g=>g.po).filter(Boolean))]; if(dp.length)f.pos=dp;
+        changed++;
+      }catch(err){ console.error('recalc',err); }
+    }
+    d.items=d.files.flatMap(f=>f.items);
+  }
+  await DB.put('ops',op);
+  toast(changed?('Recalculado: '+changed+' de '+pdfs+' PDF(s)'):'No se recalculó (no se detectaron PDFs COSTEX)');
+  render();
+}
 function fileToB64(file){return new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result);r.onerror=rej;r.readAsDataURL(file);});}
 const DOC_LABELS={cotizacion:'Pedido / Confirmación',factura:'Factura',packing:'Packing List'};
 function handleFiles(key, fileList){

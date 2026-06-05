@@ -383,11 +383,13 @@ function buildIndex(items, provId){
   (items||[]).forEach(it=>{
     const r = Codes.resolveKey(it.code, provId, state.crossref);
     const k = r.key;
-    if(!idx[k]) idx[k] = {key:k, shown:r.shown, status:r.status, codes:new Set(), qty:0, price:null, desc:it.desc||'', parts:[]};
+    if(!idx[k]) idx[k] = {key:k, shown:r.shown, status:r.status, codes:new Set(), qty:0, price:null, desc:it.desc||'', parts:[], ordered:0, bo:0};
     idx[k].codes.add(Codes.norm(it.code));
     if(r.shown && r.shown.length>idx[k].shown.length) idx[k].shown=r.shown;
     const q=Number(it.qty)||0;
     idx[k].qty += q;
+    idx[k].ordered += Number(it.ordered)||0;
+    idx[k].bo += Number(it.bo)||0;
     idx[k].parts.push({qty:q, price:(it.price!=null&&it.price!==''?Number(it.price):null)});
     if(it.price!=null && it.price!=='') idx[k].price = Number(it.price);
     if(!idx[k].desc && it.desc) idx[k].desc = it.desc;
@@ -441,7 +443,8 @@ function ocReport(op){
     const bdP=P?P.breakdown:null, bdF=F?F.breakdown:null, bdK=K?K.breakdown:null;
     const mixedPrice=(P&&P.mixedPrice)||(F&&F.mixedPrice)||(K&&K.mixedPrice)||false;
     const priceF=(F&&F.price!=null)?F.price:null;
-    rows.push({key:k,shown,desc,qP,qF,qK,back,status,sev,packDiff,unknown,hasPed,hasFac,hasPak,bdP,bdF,bdK,mixedPrice,priceF});
+    const ordF=F?(F.ordered||0):0, boF=F?(F.bo||0):0;
+    rows.push({key:k,shown,desc,qP,qF,qK,back,status,sev,packDiff,unknown,hasPed,hasFac,hasPak,bdP,bdF,bdK,mixedPrice,priceF,ordF,boF});
   });
   const order={bad:0,warn:1,mut:3,ok:2};
   rows.sort((a,b)=>order[a.sev]-order[b.sev]||b.back-a.back||a.shown.localeCompare(b.shown));
@@ -549,6 +552,7 @@ function vOC(){
   const faltaPk=r.rows.filter(x=>x.hasFac&&x.hasPak&&x.qF>x.qK).length;
   const demasPk=r.rows.filter(x=>x.hasFac&&x.hasPak&&x.qK>x.qF).length;
   const okPk=r.rows.filter(x=>x.hasFac&&x.hasPak&&x.qF===x.qK&&x.qF>0).length;
+  const boItems=r.rows.filter(x=>x.boF>0).length;
   const arrow=c=>state.ocSort.col===c?`<span class="ar">${state.ocSort.dir>0?'▲':'▼'}</span>`:'';
   main.innerHTML = `
     ${crumb([{t:'Proveedores',go:'prov'},{t:p?p.name:'',go:'provDetail'},{t:op.ref||'OC'}])}
@@ -571,12 +575,13 @@ function vOC(){
       <div class="kpi ${packDiffs?'bad':''}"><div class="v">${packDiffs}</div><div class="l">Factura ≠ packing</div></div>
     </div>
     <div class="sec-title">Estado del pedido <span class="muted small">combina todos los archivos y sub-órdenes por código</span><span class="ln"></span></div>`
-    :`<div class="grid3" style="margin:20px 0 8px">
+    :`<div class="grid4" style="margin:20px 0 8px">
       <div class="kpi ${faltaPk?'bad':'ok'}"><div class="v">${faltaPk}</div><div class="l">Falta en packing</div></div>
       <div class="kpi ${demasPk?'warn':''}"><div class="v">${demasPk}</div><div class="l">Llegó de más</div></div>
       <div class="kpi ok"><div class="v">${okPk}</div><div class="l">Factura = packing</div></div>
+      <div class="kpi ${boItems?'warn':''}"><div class="v">${boItems}</div><div class="l">En backorder</div></div>
     </div>
-    <div class="sec-title">Factura vs Packing <span class="muted small">lo facturado (lo que llega) contra lo realmente embarcado, por código</span><span class="ln"></span></div>`}
+    <div class="sec-title">Factura vs Packing <span class="muted small">Pedido y B/O vienen de la factura (ORDERED / B/O) · Facturado = lo que llega · Empacado = lo embarcado</span><span class="ln"></span></div>`}
     <div class="legend">
       <span><span class="flag" style="background:var(--ok)"></span>Completo</span>
       <span><span class="flag" style="background:var(--warn)"></span>Backorder parcial / extra</span>
@@ -595,10 +600,10 @@ function vOC(){
       ${sortRows(r.rows).map(x=>`<tr>
         <td class="code">${esc(x.shown)} ${x.unknown?`<a href="#" data-map="${esc(x.key[0]==='?'?x.key.slice(1):'')}" style="color:var(--info)">mapear</a>`:''}</td>
         <td>${esc((x.desc||'').slice(0,44))}</td>
-        <td class="num">${x.hasPed?fmtQty(x.qP,x.bdP):'—'}</td>
+        <td class="num">${x.hasPed?fmtQty(x.qP,x.bdP):(x.ordF>0?x.ordF:'—')}</td>
         <td class="num">${x.hasFac?fmtQty(x.qF,x.bdF):'—'}</td>
         <td class="num">${x.hasPak?fmtQty(x.qK,x.bdK):'—'}</td>
-        <td class="num" style="color:${x.back>0?'var(--warn)':'var(--ink3)'};font-weight:${x.back>0?'700':'400'}">${x.hasPed?(x.back>0?x.back:'0'):'—'}</td>
+        <td class="num" style="color:${(x.hasPed?x.back>0:x.boF>0)?'var(--warn)':'var(--ink3)'};font-weight:${(x.hasPed?x.back>0:x.boF>0)?'700':'400'}">${x.hasPed?(x.back>0?x.back:'0'):(x.boF>0?x.boF:'—')}</td>
         <td>${sevPill(x.sev,x.status)}${x.packDiff?' '+sevPill('bad','≠ packing'):''}${x.mixedPrice?' '+sevPill('info','precio mixto'):''}</td>
       </tr>`).join('')}
     </tbody></table></div>`:''}`;

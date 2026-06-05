@@ -259,31 +259,23 @@ const DB = (()=>{
    NORMALIZACIÓN Y EMPAREJAMIENTO DE CÓDIGOS
    ============================================================ */
 const Codes = {
-  // Limpia: mayúsculas, sin espacios/guiones/puntos/slashes
   norm(raw){ return String(raw==null?'':raw).toUpperCase().replace(/[\s\-\._\/]+/g,'').trim(); },
-
-  // Separa el código base de la marca pegada al final (SAP: 2390559CTP, 1R0750CAT)
   split(normd){
     const m = normd.match(/^(.*?)([A-Z]{2,4})$/);
-    if(m && /\d$/.test(m[1]) && m[1].length>=3){
-      return {base:m[1], brand:m[2]};
-    }
+    if(m && /\d$/.test(m[1]) && m[1].length>=3) return {base:m[1], brand:m[2]};
     return {base:normd, brand:''};
   },
-
-  // ¿Tiene forma de número de parte CAT/CTP?  (7 dígitos | 6 con letra en 2da posición)
-  isPartNumber(base){
-    return /^\d{7}$/.test(base) || /^[0-9][A-Z][0-9]{4}$/.test(base) || /^\d{6,8}$/.test(base);
-  },
-
-  // Resuelve la llave de emparejamiento de una línea, usando equivalencias del proveedor
+  // Forma de número de parte: 6-8 dígitos, o 6 con letra en 2da posición (ej. 0L1026)
+  isPartNumber(base){ return /^\d{6,8}$/.test(base) || /^[0-9][A-Z][0-9]{4}$/.test(base); },
+  // Llave de comparación: ignora ceros a la izquierda SOLO en códigos numéricos
+  // (0931436 y 931436 = mismo ítem) pero respeta los que llevan letra (0L1026 intacto)
+  canon(base){ return /^\d+$/.test(base) ? (base.replace(/^0+/,'')||'0') : base; },
   resolveKey(rawCode, provId, crossref){
     const n = this.norm(rawCode);
     const {base} = this.split(n);
-    if(this.isPartNumber(base)) return {key:base, status:'auto', shown:base};
-    // buscar en equivalencias: código ajeno -> canónico
-    const hit = crossref.find(c=>c.provId===provId && (c.alien===n || c.alien===base));
-    if(hit) return {key:hit.canonical, status:'mapped', shown:hit.canonical};
+    if(this.isPartNumber(base)) return {key:this.canon(base), status:'auto', shown:base};
+    const hit = crossref.find(c=>c.provId===provId && (c.alien===n || c.alien===base || this.canon(c.alien)===this.canon(base)));
+    if(hit) return {key:this.canon(this.split(this.norm(hit.canonical)).base), status:'mapped', shown:hit.canonical};
     return {key:'?'+n, status:'unknown', shown:n};
   }
 };
@@ -354,6 +346,7 @@ function buildIndex(items, provId){
     const k = r.key;
     if(!idx[k]) idx[k] = {key:k, shown:r.shown, status:r.status, codes:new Set(), qty:0, price:null, desc:it.desc||''};
     idx[k].codes.add(Codes.norm(it.code));
+    if(r.shown && r.shown.length>idx[k].shown.length) idx[k].shown=r.shown;
     idx[k].qty += Number(it.qty)||0;
     if(it.price!=null && it.price!=='') idx[k].price = Number(it.price);
     if(!idx[k].desc && it.desc) idx[k].desc = it.desc;

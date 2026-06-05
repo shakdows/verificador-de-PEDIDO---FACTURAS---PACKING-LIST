@@ -202,6 +202,9 @@ details.panel summary::-webkit-details-marker{display:none}
 .frow{display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--line)}
 .frow:last-child{border-bottom:0}
 .frow .fn{flex:1;font-family:var(--mono);font-size:12px;color:var(--ink);word-break:break-all}
+.tbl th.sortable{cursor:pointer;user-select:none;transition:color .12s}
+.tbl th.sortable:hover{color:var(--ink)}
+.tbl th .ar{color:var(--cat-dim);margin-left:5px;font-size:10px}
 </style>
 </head>
 <body>
@@ -338,7 +341,7 @@ async function readPDF(file){
 /* ============================================================
    ESTADO
    ============================================================ */
-let state = { view:'prov', prov:[], crossref:[], ops:[], curProvId:null, cur:null, queue:[] };
+let state = { view:'prov', prov:[], crossref:[], ops:[], curProvId:null, cur:null, queue:[], ocSort:{col:null,dir:1} };
 function newOp(provId){
   const p = state.prov.find(x=>x.id===provId);
   return { id:'op_'+Date.now(), provId, provName:p?p.name:'', ref:'',
@@ -412,6 +415,15 @@ function ocReport(op){
   const order={bad:0,warn:1,mut:3,ok:2};
   rows.sort((a,b)=>order[a.sev]-order[b.sev]||b.back-a.back||a.shown.localeCompare(b.shown));
   return {rows, unknowns:Object.values(unknowns), hasPed,hasFac,hasPak};
+}
+function sortRows(rows){
+  const s=state.ocSort; if(!s.col) return rows;
+  const num=['qP','qF','qK','back'].includes(s.col);
+  const sevOrder={bad:0,warn:1,mut:2,ok:3};
+  const get=x=> s.col==='estado'?sevOrder[x.sev] : s.col==='shown'?x.shown : s.col==='desc'?(x.desc||'') : (x[s.col]||0);
+  return [...rows].sort((a,b)=>{ const va=get(a),vb=get(b);
+    const c = num ? (va-vb) : String(va).localeCompare(String(vb),undefined,{numeric:true});
+    return c*s.dir; });
 }
 
 /* ============================================================
@@ -502,6 +514,7 @@ function vOC(){
   const pedidas=r.rows.filter(x=>x.qP>0).length;
   const completes=r.rows.filter(x=>x.hasPed&&x.qP>0&&x.qF>=x.qP&&x.hasFac).length;
   const packDiffs=r.rows.filter(x=>x.packDiff).length;
+  const arrow=c=>state.ocSort.col===c?`<span class="ar">${state.ocSort.dir>0?'▲':'▼'}</span>`:'';
   main.innerHTML = `
     ${crumb([{t:'Proveedores',go:'prov'},{t:p?p.name:'',go:'provDetail'},{t:op.ref||'OC'}])}
     <div class="head between">
@@ -530,9 +543,15 @@ function vOC(){
       <span><span class="flag" style="background:var(--info)"></span>Sin equivalencia</span>
     </div>
     <div class="tblwrap"><table class="tbl"><thead><tr>
-      <th>Código</th><th>Descripción</th><th class="num">Pedido</th><th class="num">Facturado</th><th class="num">Empacado</th><th class="num">Backorder</th><th>Estado</th>
+      <th class="sortable" data-sort="shown">Código${arrow('shown')}</th>
+      <th class="sortable" data-sort="desc">Descripción${arrow('desc')}</th>
+      <th class="sortable num" data-sort="qP">Pedido${arrow('qP')}</th>
+      <th class="sortable num" data-sort="qF">Facturado${arrow('qF')}</th>
+      <th class="sortable num" data-sort="qK">Empacado${arrow('qK')}</th>
+      <th class="sortable num" data-sort="back">Backorder${arrow('back')}</th>
+      <th class="sortable" data-sort="estado">Estado${arrow('estado')}</th>
     </tr></thead><tbody>
-      ${r.rows.map(x=>`<tr>
+      ${sortRows(r.rows).map(x=>`<tr>
         <td class="code">${esc(x.shown)} ${x.unknown?`<a href="#" data-map="${esc(x.key[0]==='?'?x.key.slice(1):'')}" style="color:var(--info)">mapear</a>`:''}</td>
         <td>${esc((x.desc||'').slice(0,44))}</td>
         <td class="num">${x.hasPed?x.qP:'—'}</td>
@@ -554,6 +573,7 @@ function vOC(){
   main.querySelectorAll('[data-map]').forEach(x=>x.onclick=e=>{e.preventDefault();quickMap(op.provId,x.dataset.map);});
   const ge=$('#goEquiv'); if(ge)ge.onclick=e=>{e.preventDefault();state.view='equiv';render();};
   const ex=$('#exp'); if(ex)ex.onclick=()=>exportOC(op,r);
+  main.querySelectorAll('th.sortable').forEach(th=>th.onclick=()=>{ const c=th.dataset.sort; if(state.ocSort.col===c)state.ocSort.dir*=-1; else {state.ocSort.col=c; state.ocSort.dir=1;} render(); });
 }
 
 /* ---------- carga de MÚLTIPLES archivos por casilla ---------- */

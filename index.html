@@ -305,24 +305,26 @@ async function readPDF(file){
   for(let p=1;p<=pdf.numPages;p++){
     const page = await pdf.getPage(p);
     const tc = await page.getTextContent();
-    // agrupar por coordenada Y para reconstruir filas
     const byY = {};
-    tc.items.forEach(it=>{
-      const y = Math.round(it.transform[5]);
-      (byY[y]=byY[y]||[]).push({x:it.transform[4],s:it.str});
-    });
+    tc.items.forEach(it=>{ const y=Math.round(it.transform[5]); (byY[y]=byY[y]||[]).push({x:it.transform[4],s:it.str}); });
     Object.keys(byY).map(Number).sort((a,b)=>b-a).forEach(y=>{
       const txt = byY[y].sort((a,b)=>a.x-b.x).map(o=>o.s).join('  ').replace(/\s+/g,' ').trim();
       if(txt) lines.push(txt);
     });
   }
-  // intento heurístico de detectar líneas con código + cantidad
-  const guess = lines.map(l=>{
-    const codeM = l.match(/\b([0-9][A-Z]?[0-9]{3,7}[A-Z]{0,4})\b/);
-    const nums = (l.match(/\b\d+(?:[\.,]\d+)?\b/g)||[]);
-    return {raw:l, code:codeM?codeM[1]:'', qty:'', desc:l};
-  });
-  return {kind:'pdf', rows:lines, guess};
+  const full = lines.join('\n');
+  const isCostex = /COSTEX/i.test(full);
+  let guess=[];
+  if(isCostex){
+    // COSTEX:  Pc/Sp  Qty  PartNo  Description  Checking(7d)  Lc(2d)  Order  Item  Cust.P.O.
+    // Tomamos solo Qty, PartNo, Description y Cust.P.O.  (el resto se ignora)
+    const re=/^(\d+\/\d+)\s+(\d+)\s+(\S+)\s+(.+?)\s+(\d{7})\s+(\d{2})\s+(\d+)\s+(\d+)\s+(OC\b.*?)\s*$/;
+    lines.forEach(l=>{ const m=l.match(re); if(m) guess.push({raw:l, qty:m[2], code:m[3], desc:m[4].trim(), po:m[9].trim()}); });
+  }
+  if(!guess.length){
+    guess = lines.map(l=>{ const codeM=l.match(/\b([0-9][A-Z]?[0-9]{3,7}[A-Z]{0,4})\b/); return {raw:l, code:codeM?codeM[1]:'', qty:'', desc:l}; });
+  }
+  return {kind:'pdf', rows:lines, guess, costex:isCostex};
 }
 
 /* ============================================================
@@ -546,7 +548,7 @@ function vOC(){
 /* ---------- carga de archivos ---------- */
 async function handleFile(key,file){ if(!file)return; toast('Leyendo '+file.name+'…');
   try{ const isPdf=/\.pdf$/i.test(file.name); const parsed=isPdf?await readPDF(file):await readExcel(file);
-    state.cur.docs[key]={fileName:file.name,items:[],_parsed:parsed}; openReview(key);
+    state.cur.docs[key]={fileName:file.name,items:[],_parsed:parsed}; if(parsed.costex)toast('Formato COSTEX detectado'); openReview(key);
   }catch(err){console.error(err);toast('No se pudo leer el archivo');}
 }
 
@@ -592,9 +594,13 @@ function renderExcelReview(key,parsed,label){
     toast(items.length+' líneas confirmadas'); state.view='oc'; render();};
 }
 function renderPdfReview(key,parsed,label){
-  const init=parsed.guess.filter(g=>g.code).map(g=>({code:g.code,desc:g.desc.slice(0,60),qty:''}));
+  const init=parsed.guess.filter(g=>g.code).map(g=>({code:g.code,desc:(g.desc||'').slice(0,60),qty:g.qty||''}));
   const rows=init.length?init:[{code:'',desc:'',qty:''}];
-  buildGrid(key,label,rows,`Lectura aproximada del PDF. Corrige códigos y escribe las cantidades.`,
+  const pos=[...new Set(parsed.guess.map(g=>g.po).filter(Boolean))];
+  const sub = parsed.costex
+    ? `Formato <b>COSTEX</b> detectado: ${init.length} líneas leídas automáticamente (Qty · Part No · Description).${pos.length?' Pedido(s): <b>'+pos.map(esc).join(', ')+'</b>.':''} Revisa y confirma.`
+    : `Lectura aproximada del PDF. Corrige códigos y escribe las cantidades.`;
+  buildGrid(key,label,rows,sub,
     `<details class="panel"><summary class="muted small" style="cursor:pointer">Ver texto crudo extraído (${parsed.rows.length} líneas)</summary><pre style="white-space:pre-wrap;font-family:var(--mono);font-size:11px;color:var(--ink2);max-height:300px;overflow:auto;margin-top:12px">${esc(parsed.rows.join('\n'))}</pre></details>`);
 }
 function renderItemsEdit(key,label){

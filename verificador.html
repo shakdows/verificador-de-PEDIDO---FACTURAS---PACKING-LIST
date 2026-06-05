@@ -1,0 +1,700 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Verificador de Embarques — Cotización · Factura · Packing</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<style>
+:root{
+  --bg:#eef1f6; --bg2:#f4f6fa; --panel:#ffffff; --panel2:#f3f6fa;
+  --line:#e4e9f0; --line2:#d2dae4;
+  --ink:#1a2230; --ink2:#56616f; --ink3:#8a96a4;
+  --cat:#eaa800; --cat-dim:#c98a00; --link:#a86a00;
+  --ok:#0f8a57; --warn:#9a6b00; --bad:#c62f2f; --info:#2563c9;
+  --shadow:0 1px 2px rgba(16,24,40,.04), 0 10px 28px -16px rgba(16,24,40,.18);
+  --mono:'IBM Plex Mono',ui-monospace,monospace;
+  --sans:'IBM Plex Sans',system-ui,sans-serif;
+  --disp:'Bricolage Grotesque',var(--sans);
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{
+  background:
+    radial-gradient(1100px 520px at 100% -8%, rgba(234,168,0,.07), transparent 60%),
+    radial-gradient(800px 460px at -8% 108%, rgba(37,99,217,.05), transparent 55%),
+    var(--bg);
+  color:var(--ink); font-family:var(--sans); font-size:14px; line-height:1.5;
+  -webkit-font-smoothing:antialiased;
+}
+.app{display:grid; grid-template-columns:240px 1fr; height:100vh}
+/* ---------- sidebar ---------- */
+.side{
+  background:linear-gradient(180deg,#ffffff,var(--bg2));
+  border-right:1px solid var(--line); padding:20px 14px; display:flex; flex-direction:column; gap:6px;
+}
+.brand{display:flex; align-items:center; gap:11px; padding:4px 8px 18px}
+.brand .mark{
+  width:36px; height:36px; border-radius:9px; flex:none;
+  background:linear-gradient(135deg,var(--cat),var(--cat-dim));
+  display:grid; place-items:center; color:#241a00; font-weight:800; font-family:var(--disp);
+  box-shadow:0 6px 16px -8px rgba(234,168,0,.7);
+}
+.brand h1{font:800 15px/1.1 var(--disp); margin:0; letter-spacing:.2px; color:var(--ink)}
+.brand span{font-size:10.5px; color:var(--ink3); text-transform:uppercase; letter-spacing:1.6px}
+.nav{display:flex; flex-direction:column; gap:3px; margin-top:6px}
+.nav button{
+  all:unset; cursor:pointer; display:flex; align-items:center; gap:11px;
+  padding:10px 11px; border-radius:10px; color:var(--ink2); font-weight:500; font-size:13px;
+  transition:background .12s,color .12s;
+}
+.nav button svg{width:17px; height:17px; opacity:.7}
+.nav button:hover{background:var(--panel2); color:var(--ink)}
+.nav button.on{background:#fff7e6; color:#7a4e00; box-shadow:inset 3px 0 0 var(--cat), var(--shadow)}
+.nav button.on svg{opacity:1; color:var(--cat-dim)}
+.side .grow{flex:1}
+.side .foot{font-size:10.5px; color:var(--ink3); padding:8px; line-height:1.55; border-top:1px solid var(--line)}
+.side .foot b{color:var(--link)}
+/* ---------- main ---------- */
+.main{overflow:auto; padding:32px 40px 80px}
+.head{margin-bottom:24px}
+.head h2{font:800 27px/1.1 var(--disp); margin:0 0 7px; letter-spacing:-.4px; color:var(--ink)}
+.head p{margin:0; color:var(--ink2); max-width:700px}
+.kicker{font:700 11px/1 var(--sans); text-transform:uppercase; letter-spacing:2px; color:var(--link); margin-bottom:10px}
+.panel{background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:20px; box-shadow:var(--shadow)}
+.grid3{display:grid; grid-template-columns:repeat(3,1fr); gap:16px}
+.grid4{display:grid; grid-template-columns:repeat(4,1fr); gap:14px}
+@media(max-width:1100px){.grid3,.grid4{grid-template-columns:1fr 1fr}}
+/* upload slot */
+.slot{
+  border:1.5px dashed var(--line2); border-radius:14px; padding:24px 18px; text-align:center;
+  transition:.15s; background:var(--panel); position:relative; min-height:158px;
+  display:flex; flex-direction:column; align-items:center; justify-content:center; gap:7px; box-shadow:var(--shadow);
+}
+.slot:hover{border-color:var(--cat-dim)}
+.slot.drag{border-color:var(--link); background:#fffaf0}
+.slot.done{border-style:solid; border-color:var(--ok); background:#f5fbf8}
+.slot .tag{font:700 10px/1 var(--sans); letter-spacing:1.6px; text-transform:uppercase; color:var(--ink3)}
+.slot h3{font:700 16px/1.2 var(--disp); margin:2px 0; color:var(--ink)}
+.slot .hint{font-size:11.5px; color:var(--ink3)}
+.slot .file{font-family:var(--mono); font-size:12px; color:var(--ok); word-break:break-all; margin-top:2px}
+.slot .cnt{font-size:11.5px;color:var(--ink2)}
+.slot input{position:absolute; inset:0; opacity:0; cursor:pointer}
+.slot .ic{color:var(--ink3)}
+.slot.done .ic{color:var(--ok)}
+.slot .ic svg{width:30px;height:30px}
+/* buttons */
+.btn{
+  all:unset; cursor:pointer; display:inline-flex; align-items:center; gap:8px;
+  padding:10px 16px; border-radius:10px; font-weight:600; font-size:13px; transition:.12s;
+}
+.btn.primary{background:linear-gradient(135deg,var(--cat),var(--cat-dim)); color:#241a00; box-shadow:0 8px 20px -10px rgba(234,168,0,.8)}
+.btn.primary:hover{filter:brightness(1.05)}
+.btn.ghost{background:var(--panel); color:var(--ink); border:1px solid var(--line2)}
+.btn.ghost:hover{border-color:var(--cat-dim); background:var(--panel2)}
+.btn:disabled{opacity:.45; cursor:not-allowed; filter:grayscale(.3)}
+.btn.sm{padding:7px 12px; font-size:12px; border-radius:8px}
+.row{display:flex; gap:12px; align-items:center; flex-wrap:wrap}
+.between{display:flex; justify-content:space-between; align-items:center; gap:14px}
+/* inputs */
+label.f{display:block; font:700 11px/1 var(--sans); text-transform:uppercase; letter-spacing:1px; color:var(--ink3); margin-bottom:7px}
+input.t,select.t{
+  width:100%; background:var(--panel); border:1px solid var(--line2); border-radius:9px;
+  color:var(--ink); padding:10px 12px; font:500 13px var(--sans); outline:none; transition:.12s;
+}
+input.t::placeholder{color:#aeb8c4}
+input.t:focus,select.t:focus{border-color:var(--link); box-shadow:0 0 0 3px rgba(234,168,0,.15)}
+/* table */
+.tbl{width:100%; border-collapse:collapse; font-size:12.5px}
+.tbl th{
+  text-align:left; font:700 10.5px/1 var(--sans); text-transform:uppercase; letter-spacing:.7px;
+  color:var(--ink3); padding:11px 13px; border-bottom:1px solid var(--line2); position:sticky; top:0; background:#fbfcfe; z-index:1;
+}
+.tbl td{padding:10px 13px; border-bottom:1px solid var(--line); color:var(--ink)}
+.tbl tr:hover td{background:var(--panel2)}
+.tbl .code{font-family:var(--mono); font-weight:500}
+.tbl .num{text-align:right; font-family:var(--mono)}
+.tblwrap{max-height:520px; overflow:auto; border:1px solid var(--line); border-radius:12px; background:var(--panel); box-shadow:var(--shadow)}
+/* pills */
+.pill{display:inline-flex; align-items:center; gap:5px; padding:3px 9px; border-radius:999px; font:600 11px/1.3 var(--sans); white-space:nowrap; border:1px solid transparent}
+.pill.ok{background:#e7f6ef; color:#0c7048; border-color:#c5ead8}
+.pill.bad{background:#fcecec; color:#b22424; border-color:#f5d3d3}
+.pill.warn{background:#fcf3e0; color:#8a5f00; border-color:#f1e0bb}
+.pill.info{background:#e9f0fc; color:#1f57b8; border-color:#cfddf6}
+.pill.mut{background:var(--panel2); color:var(--ink2); border-color:var(--line2)}
+.dot{width:7px;height:7px;border-radius:50%;display:inline-block}
+/* kpi */
+.kpi{background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:17px 18px; box-shadow:var(--shadow)}
+.kpi .v{font:800 30px/1 var(--disp); color:var(--ink)}
+.kpi .l{font-size:11.5px; color:var(--ink2); margin-top:6px; text-transform:uppercase; letter-spacing:.5px}
+.kpi.ok{border-color:#c5ead8} .kpi.ok .v{color:var(--ok)}
+.kpi.bad{border-color:#f5d3d3} .kpi.bad .v{color:var(--bad)}
+.kpi.warn .v{color:var(--warn)}
+.kpi.info{border-color:#cfddf6} .kpi.info .v{color:var(--info)}
+/* steps */
+.steps{display:flex; gap:10px; margin-bottom:22px; flex-wrap:wrap}
+.step{display:flex; align-items:center; gap:9px; padding:8px 14px; border-radius:10px; background:var(--panel); border:1px solid var(--line); font-size:12.5px; color:var(--ink3)}
+.step b{width:20px; height:20px; border-radius:50%; background:var(--panel2); display:grid; place-items:center; font:700 11px var(--mono); color:var(--ink3)}
+.step.on{border-color:var(--link); color:var(--ink)} .step.on b{background:var(--cat); color:#241a00}
+.step.done b{background:var(--ok); color:#fff}
+/* misc */
+.empty{text-align:center; padding:56px 20px; color:var(--ink3)}
+.empty .ic{font-size:34px; opacity:.45; margin-bottom:10px}
+.muted{color:var(--ink3)} .small{font-size:12px}
+.tag2{font-family:var(--mono); font-size:11px; background:var(--panel2); padding:2px 7px; border-radius:6px; color:var(--ink2); border:1px solid var(--line)}
+.sec-title{font:800 14px/1 var(--disp); margin:28px 0 13px; display:flex; align-items:center; gap:10px; color:var(--ink)}
+.sec-title .ln{flex:1; height:1px; background:var(--line)}
+.toast{position:fixed; bottom:22px; left:50%; transform:translateX(-50%); background:var(--ink); color:#fff; padding:12px 18px; border-radius:11px; font-size:13px; box-shadow:0 16px 40px -16px rgba(16,24,40,.5); z-index:100; opacity:0; transition:.2s}
+.toast.show{opacity:1; bottom:30px}
+.hidden{display:none!important}
+.flag{display:inline-block; width:8px; height:8px; border-radius:2px; margin-right:6px}
+.editgrid td input{width:100%; background:transparent; border:1px solid transparent; color:var(--ink); font:500 12.5px var(--sans); padding:6px 7px; border-radius:6px; font-family:inherit}
+.editgrid td input.codecol{font-family:var(--mono)}
+.editgrid td input:focus{border-color:var(--link); background:#fffaf0; outline:none}
+.mapbar{display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin-bottom:14px}
+.note{background:#eff4fd; border:1px solid #d4e0f7; border-radius:11px; padding:13px 15px; font-size:12.5px; color:var(--ink2); display:flex; gap:11px; align-items:flex-start}
+.note b{color:var(--info)}
+.note .ni{flex:none; color:var(--info); margin-top:1px}
+.note .ni svg{width:17px;height:17px;display:block}
+.legend{display:flex; gap:16px; flex-wrap:wrap; margin:12px 0; font-size:11.5px; color:var(--ink2)}
+.legend span{display:flex; align-items:center; gap:6px}
+details.panel summary{list-style:none}
+details.panel summary::-webkit-details-marker{display:none}
+/* ---------- carpetas / breadcrumb ---------- */
+.crumb{display:flex;gap:9px;align-items:center;font-size:12.5px;color:var(--ink3);margin-bottom:16px}
+.crumb a{color:var(--link);text-decoration:none;font-weight:600}
+.crumb a:hover{text-decoration:underline}
+.crumb .sep{color:var(--ink3)}
+.folders{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:14px}
+.folder{background:var(--panel);border:1px solid var(--line);border-radius:13px;padding:16px;box-shadow:var(--shadow);cursor:pointer;transition:transform .13s,border-color .13s;position:relative}
+.folder:hover{border-color:var(--cat-dim);transform:translateY(-2px)}
+.folder .fic{color:var(--cat-dim);margin-bottom:10px}
+.folder .fic svg{width:26px;height:26px}
+.folder h4{font:700 15px/1.2 var(--disp);margin:0 0 4px;color:var(--ink)}
+.folder .meta{font-size:12px;color:var(--ink2)}
+.folder .x{position:absolute;top:9px;right:9px;opacity:0;transition:.12s;padding:5px}
+.folder .x svg{width:13px;height:13px;display:block}
+.folder:hover .x{opacity:.85}
+.chips{display:flex;gap:6px;margin-top:11px;flex-wrap:wrap}
+.chip{font:600 10px/1 var(--sans);text-transform:uppercase;letter-spacing:.5px;padding:5px 8px;border-radius:6px;background:var(--panel2);color:var(--ink3);border:1px solid var(--line)}
+.chip.has{background:#f0faf5;color:#0c7048;border-color:#c5ead8}
+.addcard{background:transparent;border:1.5px dashed var(--line2);border-radius:13px;padding:16px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:9px;cursor:pointer;color:var(--ink3);min-height:140px;transition:.13s;font-weight:600;font-size:13px}
+.addcard:hover{border-color:var(--cat);color:var(--link);background:#fffaf0}
+.addcard svg{width:22px;height:22px}
+
+</style>
+</head>
+<body>
+<div class="app">
+  <!-- ============ SIDEBAR ============ -->
+  <aside class="side">
+    <div class="brand">
+      <div class="mark">PT</div>
+      <div>
+        <h1>Verificador</h1>
+        <span>Embarques</span>
+      </div>
+    </div>
+    <nav class="nav" id="nav">
+      <button data-v="prov" class="on">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+        Proveedores
+      </button>
+      <button data-v="reportes">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="M7 14l4-4 3 3 5-6"/></svg>
+        Reportes
+      </button>
+      <button data-v="equiv">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 8l-4 4 4 4M17 8l4 4-4 4M14 4l-4 16"/></svg>
+        Equivalencias
+      </button>
+    </nav>
+    <div class="grow"></div>
+    <div class="foot">
+      Datos guardados en <b>este equipo/navegador</b> (IndexedDB). Exporta tu tabla de equivalencias para respaldarla.
+    </div>
+  </aside>
+
+  <!-- ============ MAIN ============ -->
+  <main class="main" id="main"></main>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+const ICON = {
+  doc:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h6"/></svg>',
+  check:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M8.5 12.5l2.4 2.4 4.6-5"/></svg>',
+  info:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg>'
+};
+
+/* ============================================================
+   DB — IndexedDB minimal wrapper
+   ============================================================ */
+const DB = (()=>{
+  let db;
+  const open = ()=>new Promise((res,rej)=>{
+    const r = indexedDB.open('verificador_embarques',1);
+    r.onupgradeneeded = e=>{
+      const d = e.target.result;
+      if(!d.objectStoreNames.contains('ops')) d.createObjectStore('ops',{keyPath:'id'});
+      if(!d.objectStoreNames.contains('crossref')) d.createObjectStore('crossref',{keyPath:'id'});
+      if(!d.objectStoreNames.contains('prov')) d.createObjectStore('prov',{keyPath:'id'});
+    };
+    r.onsuccess = e=>{db=e.target.result; res();};
+    r.onerror = e=>rej(e);
+  });
+  const tx = (store,mode)=>db.transaction(store,mode).objectStore(store);
+  const all = store=>new Promise(res=>{const out=[];const c=tx(store,'readonly').openCursor();c.onsuccess=e=>{const cur=e.target.result;if(cur){out.push(cur.value);cur.continue();}else res(out);};});
+  const put = (store,val)=>new Promise(res=>{tx(store,'readwrite').put(val).onsuccess=()=>res();});
+  const del = (store,id)=>new Promise(res=>{tx(store,'readwrite').delete(id).onsuccess=()=>res();});
+  return {open,all,put,del};
+})();
+
+/* ============================================================
+   NORMALIZACIÓN Y EMPAREJAMIENTO DE CÓDIGOS
+   ============================================================ */
+const Codes = {
+  // Limpia: mayúsculas, sin espacios/guiones/puntos/slashes
+  norm(raw){ return String(raw==null?'':raw).toUpperCase().replace(/[\s\-\._\/]+/g,'').trim(); },
+
+  // Separa el código base de la marca pegada al final (SAP: 2390559CTP, 1R0750CAT)
+  split(normd){
+    const m = normd.match(/^(.*?)([A-Z]{2,4})$/);
+    if(m && /\d$/.test(m[1]) && m[1].length>=3){
+      return {base:m[1], brand:m[2]};
+    }
+    return {base:normd, brand:''};
+  },
+
+  // ¿Tiene forma de número de parte CAT/CTP?  (7 dígitos | 6 con letra en 2da posición)
+  isPartNumber(base){
+    return /^\d{7}$/.test(base) || /^[0-9][A-Z][0-9]{4}$/.test(base) || /^\d{6,8}$/.test(base);
+  },
+
+  // Resuelve la llave de emparejamiento de una línea, usando equivalencias del proveedor
+  resolveKey(rawCode, provId, crossref){
+    const n = this.norm(rawCode);
+    const {base} = this.split(n);
+    if(this.isPartNumber(base)) return {key:base, status:'auto', shown:base};
+    // buscar en equivalencias: código ajeno -> canónico
+    const hit = crossref.find(c=>c.provId===provId && (c.alien===n || c.alien===base));
+    if(hit) return {key:hit.canonical, status:'mapped', shown:hit.canonical};
+    return {key:'?'+n, status:'unknown', shown:n};
+  }
+};
+
+/* ============================================================
+   PARSERS — Excel (SheetJS) y PDF (pdf.js)
+   ============================================================ */
+async function readExcel(file){
+  const buf = await file.arrayBuffer();
+  const wb = XLSX.read(buf,{type:'array'});
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  const rows = XLSX.utils.sheet_to_json(ws,{header:1,defval:''});
+  return {kind:'excel', rows};
+}
+async function readPDF(file){
+  const buf = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({data:buf}).promise;
+  const lines = [];
+  for(let p=1;p<=pdf.numPages;p++){
+    const page = await pdf.getPage(p);
+    const tc = await page.getTextContent();
+    // agrupar por coordenada Y para reconstruir filas
+    const byY = {};
+    tc.items.forEach(it=>{
+      const y = Math.round(it.transform[5]);
+      (byY[y]=byY[y]||[]).push({x:it.transform[4],s:it.str});
+    });
+    Object.keys(byY).map(Number).sort((a,b)=>b-a).forEach(y=>{
+      const txt = byY[y].sort((a,b)=>a.x-b.x).map(o=>o.s).join('  ').replace(/\s+/g,' ').trim();
+      if(txt) lines.push(txt);
+    });
+  }
+  // intento heurístico de detectar líneas con código + cantidad
+  const guess = lines.map(l=>{
+    const codeM = l.match(/\b([0-9][A-Z]?[0-9]{3,7}[A-Z]{0,4})\b/);
+    const nums = (l.match(/\b\d+(?:[\.,]\d+)?\b/g)||[]);
+    return {raw:l, code:codeM?codeM[1]:'', qty:'', desc:l};
+  });
+  return {kind:'pdf', rows:lines, guess};
+}
+
+/* ============================================================
+   ESTADO
+   ============================================================ */
+let state = { view:'prov', prov:[], crossref:[], ops:[], curProvId:null, cur:null };
+function newOp(provId){
+  const p = state.prov.find(x=>x.id===provId);
+  return { id:'op_'+Date.now(), provId, provName:p?p.name:'', ref:'',
+           fecha:new Date().toISOString().slice(0,10),
+           docs:{cotizacion:null, factura:null, packing:null} };
+}
+const IC2 = {
+  folder:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>',
+  box:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8l-9-5-9 5 9 5 9-5z"/><path d="M3 8v8l9 5 9-5V8"/><path d="M12 13v8"/></svg>',
+  plus:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
+  x:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>'
+};
+
+/* ============================================================
+   COMPARADOR
+   ============================================================ */
+function buildIndex(items, provId){
+  const idx = {};
+  (items||[]).forEach(it=>{
+    const r = Codes.resolveKey(it.code, provId, state.crossref);
+    const k = r.key;
+    if(!idx[k]) idx[k] = {key:k, shown:r.shown, status:r.status, codes:new Set(), qty:0, price:null, desc:it.desc||''};
+    idx[k].codes.add(Codes.norm(it.code));
+    idx[k].qty += Number(it.qty)||0;
+    if(it.price!=null && it.price!=='') idx[k].price = Number(it.price);
+    if(!idx[k].desc && it.desc) idx[k].desc = it.desc;
+  });
+  return idx;
+}
+function compare(idxA, idxB, labelA, labelB){
+  const keys = new Set([...Object.keys(idxA),...Object.keys(idxB)]);
+  const rows = [];
+  keys.forEach(k=>{
+    const a=idxA[k], b=idxB[k]; let status,sev;
+    if(a&&!b){status='Falta en '+labelB;sev='bad';}
+    else if(!a&&b){status='Extra en '+labelB;sev='warn';}
+    else{ if(a.qty===b.qty){status='OK';sev='ok';} else {status='Cantidad distinta';sev='bad';} }
+    rows.push({key:k,shown:(a&&a.shown)||(b&&b.shown)||k,qtyA:a?a.qty:null,qtyB:b?b.qty:null,status,sev});
+  });
+  return rows;
+}
+// Reporte completo de una Orden de Compra: pedido vs factura vs packing + backorder
+function ocReport(op){
+  const ped = buildIndex(op.docs.cotizacion?.items, op.provId);
+  const fac = buildIndex(op.docs.factura?.items, op.provId);
+  const pak = buildIndex(op.docs.packing?.items, op.provId);
+  const hasPed=!!op.docs.cotizacion, hasFac=!!op.docs.factura, hasPak=!!op.docs.packing;
+  const keys=new Set([...Object.keys(ped),...Object.keys(fac),...Object.keys(pak)]);
+  const rows=[]; const unknowns={};
+  keys.forEach(k=>{
+    const P=ped[k],F=fac[k],K=pak[k];
+    const qP=P?P.qty:0, qF=F?F.qty:0, qK=K?K.qty:0;
+    const shown=(P&&P.shown)||(F&&F.shown)||(K&&K.shown)||k;
+    const desc=(P&&P.desc)||(F&&F.desc)||(K&&K.desc)||'';
+    const unknown=(P&&P.status==='unknown')||(F&&F.status==='unknown')||(K&&K.status==='unknown');
+    const back = hasPed ? Math.max(qP-qF,0) : 0;
+    let status,sev;
+    if(hasPed && qP>0){
+      if(!hasFac){status='Pedido';sev='mut';}
+      else if(qF===0){status='Backorder total';sev='bad';}
+      else if(qF<qP){status='Backorder parcial';sev='warn';}
+      else if(qF>qP){status='Enviado de más';sev='warn';}
+      else{status='Completo';sev='ok';}
+    } else if(qF>0){status='Extra (no pedido)';sev='warn';}
+    else {status='—';sev='mut';}
+    const packDiff = (hasFac&&hasPak&&qF!==qK);
+    if(unknown){ const c=[...(P?P.codes:F?F.codes:K.codes)][0]; unknowns[c]={code:c,desc,from:P?'pedido':F?'factura':'packing'}; }
+    rows.push({key:k,shown,desc,qP,qF,qK,back,status,sev,packDiff,unknown,hasPed,hasFac,hasPak});
+  });
+  const order={bad:0,warn:1,mut:3,ok:2};
+  rows.sort((a,b)=>order[a.sev]-order[b.sev]||b.back-a.back||a.shown.localeCompare(b.shown));
+  return {rows, unknowns:Object.values(unknowns), hasPed,hasFac,hasPak};
+}
+
+/* ============================================================
+   UI HELPERS
+   ============================================================ */
+const $ = s=>document.querySelector(s);
+const main = $('#main');
+function toast(m){const t=$('#toast');t.textContent=m;t.classList.add('show');clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('show'),2200);}
+function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+function sevPill(sev,txt){const m={ok:'ok',bad:'bad',warn:'warn',info:'info'};return `<span class="pill ${m[sev]||'mut'}">${esc(txt)}</span>`;}
+function crumb(parts){
+  return `<div class="crumb">${parts.map((p,i)=>`${i?'<span class="sep">/</span>':''}${p.go?`<a href="#" data-crumb="${p.go}">${esc(p.t)}</a>`:`<span>${esc(p.t)}</span>`}`).join('')}</div>`;
+}
+function bindCrumb(){ main.querySelectorAll('[data-crumb]').forEach(a=>a.onclick=e=>{e.preventDefault(); state.view=a.dataset.crumb; if(a.dataset.crumb==='prov')state.curProvId=null; render();}); }
+
+/* ============================================================
+   ROUTER
+   ============================================================ */
+function render(){
+  document.querySelectorAll('#nav button').forEach(b=>{
+    const active = b.dataset.v===state.view || (b.dataset.v==='prov' && (state.view==='provDetail'||state.view==='oc'));
+    b.classList.toggle('on', active);
+  });
+  ({prov:vProv, provDetail:vProvDetail, oc:vOC, reportes:vReportes, equiv:vEquiv}[state.view]||vProv)();
+}
+
+/* ---------- PROVEEDORES (carpetas) ---------- */
+function vProv(){
+  main.innerHTML = `
+    <div class="head"><div class="kicker">Archivo</div><h2>Proveedores</h2>
+      <p>Cada proveedor es una carpeta. Entra para ver y crear sus órdenes de compra.</p></div>
+    <div class="folders">
+      ${state.prov.map(p=>{const n=state.ops.filter(o=>o.provId===p.id).length;
+        return `<div class="folder" data-prov="${p.id}">
+          <button class="btn ghost sm x" data-delp="${p.id}">${IC2.x}</button>
+          <div class="fic">${IC2.folder}</div>
+          <h4>${esc(p.name)}</h4>
+          <div class="meta">${n} ${n===1?'orden de compra':'órdenes de compra'}</div>
+        </div>`;}).join('')}
+      <div class="addcard" id="addProv">${IC2.plus}<span>Nuevo proveedor</span></div>
+    </div>`;
+  main.querySelectorAll('[data-prov]').forEach(c=>c.onclick=e=>{if(e.target.closest('[data-delp]'))return; state.curProvId=c.dataset.prov; state.view='provDetail'; render();});
+  main.querySelectorAll('[data-delp]').forEach(b=>b.onclick=async e=>{e.stopPropagation(); if(confirm('¿Eliminar proveedor y todas sus órdenes?')){ for(const o of state.ops.filter(o=>o.provId===b.dataset.delp)) await DB.del('ops',o.id); state.ops=state.ops.filter(o=>o.provId!==b.dataset.delp); await DB.del('prov',b.dataset.delp); state.prov=state.prov.filter(p=>p.id!==b.dataset.delp); render(); }});
+  $('#addProv').onclick=async()=>{const name=prompt('Nombre del proveedor (ej. COSTEX):'); if(!name)return; const p={id:'pr_'+Date.now(),name:name.trim()}; state.prov.push(p); await DB.put('prov',p); render();};
+}
+
+/* ---------- ÓRDENES DE COMPRA de un proveedor ---------- */
+function vProvDetail(){
+  const p=state.prov.find(x=>x.id===state.curProvId); if(!p){state.view='prov';return render();}
+  const ops=state.ops.filter(o=>o.provId===p.id).sort((a,b)=>b.id.localeCompare(a.id));
+  const chip=(has,txt)=>`<span class="chip ${has?'has':''}">${txt}</span>`;
+  main.innerHTML = `
+    ${crumb([{t:'Proveedores',go:'prov'},{t:p.name}])}
+    <div class="head"><div class="kicker">Proveedor</div><h2>${esc(p.name)}</h2>
+      <p>Órdenes de compra. Crea una y, dentro, adjunta el pedido, la factura y el packing list conforme lleguen.</p></div>
+    <div class="folders">
+      ${ops.map(o=>{const r=ocReport(o); const back=r.rows.filter(x=>x.back>0).length;
+        return `<div class="folder" data-oc="${o.id}">
+          <button class="btn ghost sm x" data-delo="${o.id}">${IC2.x}</button>
+          <div class="fic">${IC2.box}</div>
+          <h4>${esc(o.ref||'Orden sin número')}</h4>
+          <div class="meta">${o.fecha}</div>
+          <div class="chips">${chip(r.hasPed,'Pedido')}${chip(r.hasFac,'Factura')}${chip(r.hasPak,'Packing')}</div>
+          <div style="margin-top:10px">${back?sevPill('warn',back+' en backorder'):(r.hasFac?sevPill('ok','Sin backorder'):'<span class="pill mut">Falta factura</span>')}</div>
+        </div>`;}).join('')}
+      <div class="addcard" id="addOC">${IC2.plus}<span>Nueva orden de compra</span></div>
+    </div>`;
+  bindCrumb();
+  main.querySelectorAll('[data-oc]').forEach(c=>c.onclick=e=>{if(e.target.closest('[data-delo]'))return; state.cur=state.ops.find(o=>o.id===c.dataset.oc); state.view='oc'; render();});
+  main.querySelectorAll('[data-delo]').forEach(b=>b.onclick=async e=>{e.stopPropagation(); if(confirm('¿Eliminar esta orden de compra?')){await DB.del('ops',b.dataset.delo); state.ops=state.ops.filter(o=>o.id!==b.dataset.delo); render();}});
+  $('#addOC').onclick=async()=>{const ref=prompt('Número / referencia de la orden de compra (ej. PO-2024-118):'); if(ref===null)return; const op=newOp(p.id); op.ref=ref.trim(); state.ops.unshift(op); await DB.put('ops',op); state.cur=op; state.view='oc'; render();};
+}
+
+/* ---------- DETALLE DE UNA ORDEN DE COMPRA ---------- */
+function vOC(){
+  const op=state.cur; if(!op){state.view='prov';return render();}
+  const p=state.prov.find(x=>x.id===op.provId);
+  const r=ocReport(op);
+  const slot=(key,tag,title,hint)=>{const doc=op.docs[key]; const done=!!doc;
+    return `<div class="slot ${done?'done':''}" data-slot="${key}">
+      <div class="ic">${done?ICON.check:ICON.doc}</div>
+      <div class="tag">${tag}</div><h3>${title}</h3>
+      ${done?`<div class="file">${esc(doc.fileName)}</div><div class="cnt">${doc.items.length} líneas · <a href="#" data-edit="${key}" style="color:var(--link)">revisar</a> · <a href="#" data-clear="${key}" style="color:var(--ink3)">quitar</a></div>`:`<div class="hint">${hint}</div>`}
+      <input type="file" accept=".xlsx,.xls,.csv,.pdf" data-up="${key}">
+    </div>`;};
+  const backRows=r.rows.filter(x=>x.back>0);
+  const pedidas=r.rows.filter(x=>x.qP>0).length;
+  const completes=r.rows.filter(x=>x.hasPed&&x.qP>0&&x.qF>=x.qP&&x.hasFac).length;
+  const packDiffs=r.rows.filter(x=>x.packDiff).length;
+  main.innerHTML = `
+    ${crumb([{t:'Proveedores',go:'prov'},{t:p?p.name:'',go:'provDetail'},{t:op.ref||'OC'}])}
+    <div class="head between">
+      <div><div class="kicker">${esc(p?p.name:'')} · ${op.fecha}</div><h2>${esc(op.ref||'Orden de compra')}</h2></div>
+      <div class="row">${r.hasPed?`<button class="btn primary sm" id="exp">⬇ Exportar Excel</button>`:''}</div>
+    </div>
+    <div class="grid3" style="margin-bottom:8px">
+      ${slot('cotizacion','Paso 1','Pedido / Confirmación','Lo que ordenaste. Excel o PDF.')}
+      ${slot('factura','Paso 2','Factura','Lo que te facturan / envían.')}
+      ${slot('packing','Paso 3','Packing List','Lo realmente embarcado.')}
+    </div>
+    ${!r.hasPed?`<div class="note" style="margin-top:18px"><span class="ni">${ICON.info}</span><div>Sube primero el <b>pedido/confirmación</b> para poder calcular el backorder. La factura y el packing los adjuntas después.</div></div>`:''}
+    ${r.unknowns.length?`<div class="note" style="margin-top:14px"><span class="ni">${ICON.info}</span><div><b>${r.unknowns.length} código(s) sin equivalencia.</b> Mapéalos en <a href="#" id="goEquiv" style="color:var(--link)">Equivalencias</a> para que coincidan con tu código SAP.</div></div>`:''}
+    ${r.hasPed?`
+    <div class="grid4" style="margin:20px 0 8px">
+      <div class="kpi"><div class="v">${pedidas}</div><div class="l">Ítems pedidos</div></div>
+      <div class="kpi ${backRows.length?'warn':'ok'}"><div class="v">${backRows.length}</div><div class="l">En backorder</div></div>
+      <div class="kpi ok"><div class="v">${completes}</div><div class="l">Completos</div></div>
+      <div class="kpi ${packDiffs?'bad':''}"><div class="v">${packDiffs}</div><div class="l">Factura ≠ packing</div></div>
+    </div>
+    <div class="sec-title">Estado del pedido <span class="muted small">qué te envían y qué queda en backorder</span><span class="ln"></span></div>
+    <div class="legend">
+      <span><span class="flag" style="background:var(--ok)"></span>Completo</span>
+      <span><span class="flag" style="background:var(--warn)"></span>Backorder parcial / extra</span>
+      <span><span class="flag" style="background:var(--bad)"></span>Backorder total / ≠ packing</span>
+      <span><span class="flag" style="background:var(--info)"></span>Sin equivalencia</span>
+    </div>
+    <div class="tblwrap"><table class="tbl"><thead><tr>
+      <th>Código</th><th>Descripción</th><th class="num">Pedido</th><th class="num">Facturado</th><th class="num">Empacado</th><th class="num">Backorder</th><th>Estado</th>
+    </tr></thead><tbody>
+      ${r.rows.map(x=>`<tr>
+        <td class="code">${esc(x.shown)} ${x.unknown?`<a href="#" data-map="${esc(x.key[0]==='?'?x.key.slice(1):'')}" style="color:var(--info)">mapear</a>`:''}</td>
+        <td>${esc((x.desc||'').slice(0,44))}</td>
+        <td class="num">${x.hasPed?x.qP:'—'}</td>
+        <td class="num">${x.hasFac?x.qF:'—'}</td>
+        <td class="num">${x.hasPak?x.qK:'—'}</td>
+        <td class="num" style="color:${x.back>0?'var(--warn)':'var(--ink3)'};font-weight:${x.back>0?'700':'400'}">${x.back>0?x.back:'0'}</td>
+        <td>${sevPill(x.sev,x.status)}${x.packDiff?' '+sevPill('bad','≠ packing'):''}</td>
+      </tr>`).join('')}
+    </tbody></table></div>`:''}`;
+  bindCrumb();
+  main.querySelectorAll('[data-up]').forEach(inp=>{const s=inp.closest('.slot');
+    inp.onchange=e=>handleFile(inp.dataset.up,e.target.files[0]);
+    s.ondragover=e=>{e.preventDefault();s.classList.add('drag');};
+    s.ondragleave=()=>s.classList.remove('drag');
+    s.ondrop=e=>{e.preventDefault();s.classList.remove('drag');if(e.dataTransfer.files[0])handleFile(inp.dataset.up,e.dataTransfer.files[0]);};});
+  main.querySelectorAll('[data-edit]').forEach(a=>a.onclick=e=>{e.preventDefault();openReview(a.dataset.edit);});
+  main.querySelectorAll('[data-clear]').forEach(a=>a.onclick=async e=>{e.preventDefault(); op.docs[a.dataset.clear]=null; await DB.put('ops',op); render();});
+  main.querySelectorAll('[data-map]').forEach(x=>x.onclick=e=>{e.preventDefault();quickMap(op.provId,x.dataset.map);});
+  const ge=$('#goEquiv'); if(ge)ge.onclick=e=>{e.preventDefault();state.view='equiv';render();};
+  const ex=$('#exp'); if(ex)ex.onclick=()=>exportOC(op,r);
+}
+
+/* ---------- carga de archivos ---------- */
+async function handleFile(key,file){ if(!file)return; toast('Leyendo '+file.name+'…');
+  try{ const isPdf=/\.pdf$/i.test(file.name); const parsed=isPdf?await readPDF(file):await readExcel(file);
+    state.cur.docs[key]={fileName:file.name,items:[],_parsed:parsed}; openReview(key);
+  }catch(err){console.error(err);toast('No se pudo leer el archivo');}
+}
+
+/* ---------- revisión / mapeo ---------- */
+let reviewMap={code:-1,desc:-1,qty:-1,price:-1}, reviewHeaderRow=0;
+function guessCol(headers,opts){for(let i=0;i<headers.length;i++){const h=String(headers[i]).toLowerCase();if(opts.some(o=>h.includes(o)))return i;}return -1;}
+function openReview(key){
+  const doc=state.cur.docs[key]; const labels={cotizacion:'Pedido / Confirmación',factura:'Factura',packing:'Packing List'};
+  if(doc._parsed && doc._parsed.kind==='excel') renderExcelReview(key,doc._parsed,labels[key]);
+  else if(doc._parsed && doc._parsed.kind==='pdf') renderPdfReview(key,doc._parsed,labels[key]);
+  else renderItemsEdit(key,labels[key]); // doc ya confirmado: editar líneas existentes
+}
+function renderExcelReview(key,parsed,label){
+  const rows=parsed.rows; let hr=0;
+  for(let i=0;i<Math.min(rows.length,15);i++){if(rows[i].filter(c=>String(c).trim()).length>=3){hr=i;break;}}
+  reviewHeaderRow=hr; const headers=rows[hr]||[];
+  reviewMap={code:guessCol(headers,['codigo','code','parte','part','item','sku','nro','n°']),
+    desc:guessCol(headers,['descrip','desc','detalle','nombre','articulo','product']),
+    qty:guessCol(headers,['cant','qty','quantity','unid','und','pcs']),
+    price:guessCol(headers,['precio','price','unit','valor','costo'])};
+  const colOpts=headers.map((h,i)=>`${i}: ${esc(String(h).slice(0,22))||'(col '+(i+1)+')'}`);
+  const sel=f=>`<select class="t" data-map="${f}"><option value="-1">— ninguna —</option>${colOpts.map((o,i)=>`<option value="${i}" ${reviewMap[f]===i?'selected':''}>${o}</option>`).join('')}</select>`;
+  const preview=rows.slice(hr,hr+40);
+  main.innerHTML=`
+    <div class="head"><div class="kicker">Revisión · ${label}</div><h2>Mapea las columnas</h2>
+      <p>Indica qué columna del Excel corresponde a cada campo. Encabezado detectado en la fila ${hr+1}.</p></div>
+    <div class="panel" style="margin-bottom:16px">
+      <div class="mapbar">
+        <div><label class="f">Código *</label>${sel('code')}</div><div><label class="f">Descripción</label>${sel('desc')}</div>
+        <div><label class="f">Cantidad *</label>${sel('qty')}</div><div><label class="f">Precio unit.</label>${sel('price')}</div>
+      </div>
+      <div class="row"><button class="btn primary" id="confirmExcel">Confirmar líneas →</button><button class="btn ghost" id="cancelRev">Cancelar</button></div>
+    </div>
+    <div class="tblwrap"><table class="tbl"><thead><tr>${headers.map((h,i)=>`<th>${i}<br>${esc(String(h).slice(0,18))}</th>`).join('')}</tr></thead>
+    <tbody>${preview.slice(1).map(rw=>`<tr>${headers.map((_,i)=>`<td>${esc(String(rw[i]??'').slice(0,28))}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
+  main.querySelectorAll('[data-map]').forEach(s=>s.onchange=e=>reviewMap[e.target.dataset.map]=Number(e.target.value));
+  $('#cancelRev').onclick=()=>{state.cur.docs[key]=null;state.view='oc';render();};
+  $('#confirmExcel').onclick=async()=>{
+    if(reviewMap.code<0||reviewMap.qty<0){toast('Asigna al menos Código y Cantidad');return;}
+    const items=[]; rows.slice(reviewHeaderRow+1).forEach(rw=>{const code=String(rw[reviewMap.code]??'').trim(); if(!code)return;
+      items.push({code, desc:reviewMap.desc>=0?String(rw[reviewMap.desc]??''):'', qty:reviewMap.qty>=0?(parseFloat(String(rw[reviewMap.qty]).replace(',','.'))||0):0, price:reviewMap.price>=0?(parseFloat(String(rw[reviewMap.price]).replace(',','.'))||null):null});});
+    state.cur.docs[key].items=items; delete state.cur.docs[key]._parsed; await DB.put('ops',state.cur);
+    toast(items.length+' líneas confirmadas'); state.view='oc'; render();};
+}
+function renderPdfReview(key,parsed,label){
+  const init=parsed.guess.filter(g=>g.code).map(g=>({code:g.code,desc:g.desc.slice(0,60),qty:''}));
+  const rows=init.length?init:[{code:'',desc:'',qty:''}];
+  buildGrid(key,label,rows,`Lectura aproximada del PDF. Corrige códigos y escribe las cantidades.`,
+    `<details class="panel"><summary class="muted small" style="cursor:pointer">Ver texto crudo extraído (${parsed.rows.length} líneas)</summary><pre style="white-space:pre-wrap;font-family:var(--mono);font-size:11px;color:var(--ink2);max-height:300px;overflow:auto;margin-top:12px">${esc(parsed.rows.join('\n'))}</pre></details>`);
+}
+function renderItemsEdit(key,label){
+  const rows=state.cur.docs[key].items.map(i=>({code:i.code,desc:i.desc||'',qty:i.qty}));
+  buildGrid(key,label,rows.length?rows:[{code:'',desc:'',qty:''}],`Edita las líneas guardadas de este documento.`,'');
+}
+function buildGrid(key,label,rows,subtitle,extra){
+  state.cur.docs[key]._edit=rows;
+  const grid=()=>`<table class="tbl editgrid"><thead><tr><th style="width:170px">Código</th><th>Descripción</th><th style="width:110px">Cantidad</th><th style="width:40px"></th></tr></thead><tbody id="pgrid">${rows.map((r,i)=>pdfRow(r,i)).join('')}</tbody></table>`;
+  main.innerHTML=`
+    <div class="head"><div class="kicker">Revisión · ${label}</div><h2>Confirma las líneas</h2><p>${subtitle}</p></div>
+    <div class="panel" style="margin-bottom:16px">
+      <div class="tblwrap" style="max-height:420px">${grid()}</div>
+      <div class="row" style="margin-top:14px"><button class="btn ghost sm" id="addRow">＋ Fila</button><div style="flex:1"></div>
+        <button class="btn primary" id="confirmGrid">Confirmar líneas →</button><button class="btn ghost" id="cancelRev">Cancelar</button></div>
+    </div>${extra}`;
+  const bind=()=>{main.querySelectorAll('#pgrid input').forEach(inp=>inp.oninput=e=>{rows[+e.target.dataset.i][e.target.dataset.f]=e.target.value;});
+    main.querySelectorAll('#pgrid [data-del]').forEach(b=>b.onclick=()=>{rows.splice(+b.dataset.del,1);refresh();});};
+  const refresh=()=>{$('#pgrid').innerHTML=rows.map((r,i)=>pdfRow(r,i)).join('');bind();};
+  bind();
+  $('#addRow').onclick=()=>{rows.push({code:'',desc:'',qty:''});refresh();};
+  $('#cancelRev').onclick=()=>{ if(!state.cur.docs[key].items.length) state.cur.docs[key]=null; else {delete state.cur.docs[key]._parsed; delete state.cur.docs[key]._edit;} state.view='oc';render();};
+  $('#confirmGrid').onclick=async()=>{const items=rows.filter(r=>String(r.code).trim()).map(r=>({code:r.code.trim(),desc:r.desc,qty:parseFloat(String(r.qty).replace(',','.'))||0,price:null}));
+    if(!items.length){toast('Agrega al menos una línea con código');return;}
+    state.cur.docs[key].items=items; delete state.cur.docs[key]._parsed; delete state.cur.docs[key]._edit; await DB.put('ops',state.cur);
+    toast(items.length+' líneas confirmadas'); state.view='oc'; render();};
+}
+function pdfRow(r,i){return `<tr>
+  <td><input class="codecol" data-i="${i}" data-f="code" value="${esc(r.code)}"></td>
+  <td><input data-i="${i}" data-f="desc" value="${esc(r.desc)}"></td>
+  <td><input data-i="${i}" data-f="qty" value="${esc(r.qty)}" style="text-align:right;font-family:var(--mono)"></td>
+  <td><button class="btn ghost sm" data-del="${i}" style="padding:4px 9px">✕</button></td></tr>`;}
+
+function quickMap(provId,alien){
+  const canonical=prompt(`Código "${alien}" del proveedor equivale a tu código SAP/internacional:\n(escribe el código base, ej. 2390559 o 1R0750)`);
+  if(!canonical)return; const c={id:'cr_'+Date.now(),provId,alien:Codes.norm(alien),canonical:Codes.split(Codes.norm(canonical)).base};
+  state.crossref.push(c); DB.put('crossref',c); toast('Equivalencia guardada'); render();
+}
+
+/* ---------- REPORTES ---------- */
+function vReportes(){
+  let totBack=0, per={};
+  state.ops.forEach(o=>{const r=ocReport(o); const b=r.rows.filter(x=>x.back>0).length; totBack+=b; const k=o.provName||'?'; (per[k]=per[k]||{ops:0,back:0}); per[k].ops++; per[k].back+=b;});
+  main.innerHTML=`<div class="head"><div class="kicker">Indicadores</div><h2>Reportes</h2><p>Resumen de órdenes y backorders por proveedor.</p></div>
+    <div class="grid4" style="margin-bottom:18px">
+      <div class="kpi"><div class="v">${state.ops.length}</div><div class="l">Órdenes de compra</div></div>
+      <div class="kpi warn"><div class="v">${totBack}</div><div class="l">Ítems en backorder</div></div>
+      <div class="kpi info"><div class="v">${state.crossref.length}</div><div class="l">Equivalencias</div></div>
+      <div class="kpi"><div class="v">${state.prov.length}</div><div class="l">Proveedores</div></div>
+    </div>
+    <div class="sec-title">Backorder por proveedor<span class="ln"></span></div>
+    ${Object.keys(per).length?`<div class="tblwrap"><table class="tbl"><thead><tr><th>Proveedor</th><th class="num">Órdenes</th><th class="num">Ítems en backorder</th></tr></thead><tbody>
+    ${Object.entries(per).map(([n,v])=>`<tr><td>${esc(n)}</td><td class="num">${v.ops}</td><td class="num">${v.back}</td></tr>`).join('')}
+    </tbody></table></div>`:`<div class="empty"><div class="ic">—</div>Sin datos todavía.</div>`}`;
+}
+
+/* ---------- EQUIVALENCIAS ---------- */
+function vEquiv(){
+  main.innerHTML=`<div class="head between"><div><div class="kicker">Tabla de cruce</div><h2>Equivalencias de códigos</h2>
+    <p>Mapea el código de un proveedor (código de cambio o local) a tu código internacional/SAP. El sistema lo usará automáticamente.</p></div>
+    <div class="row"><button class="btn ghost sm" id="impEq">Importar</button><button class="btn ghost sm" id="expEq">Exportar</button></div></div>
+    <div class="panel" style="margin-bottom:16px"><div class="mapbar" style="grid-template-columns:1.2fr 1fr 1fr auto;align-items:end">
+      <div><label class="f">Proveedor</label><select class="t" id="eqProv"><option value="">—</option>${state.prov.map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join('')}</select></div>
+      <div><label class="f">Código del proveedor</label><input class="t" id="eqAlien" placeholder="Ej. 38N-1234"></div>
+      <div><label class="f">Tu código (internacional)</label><input class="t" id="eqCanon" placeholder="Ej. 2390559"></div>
+      <div><button class="btn primary" id="eqAdd">＋ Agregar</button></div></div></div>
+    ${state.crossref.length?`<div class="tblwrap"><table class="tbl"><thead><tr><th>Proveedor</th><th>Código proveedor</th><th>→</th><th>Código internacional</th><th></th></tr></thead><tbody>
+    ${state.crossref.map(c=>{const p=state.prov.find(x=>x.id===c.provId);return `<tr><td>${esc(p?p.name:'?')}</td><td class="code">${esc(c.alien)}</td><td class="muted">→</td><td class="code" style="color:var(--link)">${esc(c.canonical)}</td><td><button class="btn ghost sm" data-del="${c.id}">✕</button></td></tr>`;}).join('')}
+    </tbody></table></div>`:`<div class="empty"><div class="ic">—</div>Sin equivalencias todavía.</div>`}`;
+  $('#eqAdd').onclick=()=>{const provId=$('#eqProv').value,alien=$('#eqAlien').value.trim(),canon=$('#eqCanon').value.trim();
+    if(!provId||!alien||!canon){toast('Completa los 3 campos');return;}
+    const c={id:'cr_'+Date.now(),provId,alien:Codes.norm(alien),canonical:Codes.split(Codes.norm(canon)).base};state.crossref.push(c);DB.put('crossref',c);render();};
+  main.querySelectorAll('[data-del]').forEach(b=>b.onclick=async()=>{await DB.del('crossref',b.dataset.del);state.crossref=state.crossref.filter(c=>c.id!==b.dataset.del);render();});
+  $('#expEq').onclick=()=>{const blob=new Blob([JSON.stringify({prov:state.prov,crossref:state.crossref},null,2)],{type:'application/json'});const u=URL.createObjectURL(blob);const a=document.createElement('a');a.href=u;a.download='equivalencias.json';a.click();};
+  $('#impEq').onclick=()=>{const i=document.createElement('input');i.type='file';i.accept='.json';i.onchange=async e=>{const j=JSON.parse(await e.target.files[0].text());for(const p of(j.prov||[])){if(!state.prov.find(x=>x.id===p.id)){state.prov.push(p);await DB.put('prov',p);}}for(const c of(j.crossref||[])){if(!state.crossref.find(x=>x.id===c.id)){state.crossref.push(c);await DB.put('crossref',c);}}toast('Importado');render();};i.click();};
+}
+
+/* ---------- EXPORT EXCEL ---------- */
+function exportOC(op,r){
+  const wb=XLSX.utils.book_new();
+  const res=[['Codigo','Descripcion','Pedido','Facturado','Empacado','Backorder','Estado']];
+  r.rows.forEach(x=>res.push([x.shown,x.desc,x.hasPed?x.qP:'',x.hasFac?x.qF:'',x.hasPak?x.qK:'',x.back,x.status+(x.packDiff?' / != packing':'')]));
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(res),'Resumen OC');
+  const back=r.rows.filter(x=>x.back>0).map(x=>[x.shown,x.desc,x.qP,x.qF,x.back]);
+  if(back.length)XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet([['Codigo','Descripcion','Pedido','Facturado','Backorder'],...back]),'Backorder');
+  if(r.unknowns.length)XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet([['Codigo','Descripcion','Documento'],...r.unknowns.map(u=>[u.code,u.desc,u.from])]),'Sin equivalencia');
+  XLSX.writeFile(wb,`OC_${(op.ref||op.id).replace(/[^\w\-]/g,'_')}.xlsx`);
+}
+
+/* ============================================================
+   INIT
+   ============================================================ */
+$('#nav').addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;state.view=b.dataset.v; if(b.dataset.v==='prov')state.curProvId=null; render();});
+(async()=>{
+  await DB.open();
+  state.prov=await DB.all('prov');
+  state.crossref=await DB.all('crossref');
+  state.ops=(await DB.all('ops')).sort((a,b)=>b.id.localeCompare(a.id));
+  render();
+})();
+</script>
+</body>
+</html>

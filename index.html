@@ -431,7 +431,8 @@ function ocReport(op){
     if(unknown){ const c=[...(P?P.codes:F?F.codes:K.codes)][0]; unknowns[c]={code:c,desc,from:P?'pedido':F?'factura':'packing'}; }
     const bdP=P?P.breakdown:null, bdF=F?F.breakdown:null, bdK=K?K.breakdown:null;
     const mixedPrice=(P&&P.mixedPrice)||(F&&F.mixedPrice)||(K&&K.mixedPrice)||false;
-    rows.push({key:k,shown,desc,qP,qF,qK,back,status,sev,packDiff,unknown,hasPed,hasFac,hasPak,bdP,bdF,bdK,mixedPrice});
+    const priceF=(F&&F.price!=null)?F.price:null;
+    rows.push({key:k,shown,desc,qP,qF,qK,back,status,sev,packDiff,unknown,hasPed,hasFac,hasPak,bdP,bdF,bdK,mixedPrice,priceF});
   });
   const order={bad:0,warn:1,mut:3,ok:2};
   rows.sort((a,b)=>order[a.sev]-order[b.sev]||b.back-a.back||a.shown.localeCompare(b.shown));
@@ -541,7 +542,7 @@ function vOC(){
     ${crumb([{t:'Proveedores',go:'prov'},{t:p?p.name:'',go:'provDetail'},{t:op.ref||'OC'}])}
     <div class="head between">
       <div><div class="kicker">${esc(p?p.name:'')} · ${op.fecha}</div><h2>${esc(op.ref||'Orden de compra')}</h2></div>
-      <div class="row">${r.hasPed?`<button class="btn primary sm" id="exp">⬇ Exportar Excel</button>`:''}</div>
+      <div class="row">${(r.hasFac&&r.hasPak)?`<button class="btn ghost sm" id="fvp">Factura vs Packing</button>`:''}${r.hasPed?`<button class="btn primary sm" id="exp">⬇ Exportar Excel</button>`:''}</div>
     </div>
     <div class="grid3" style="margin-bottom:8px">
       ${slot('cotizacion','Paso 1','Pedido / Confirmación','Lo que ordenaste. Excel o PDF.')}
@@ -595,6 +596,7 @@ function vOC(){
   main.querySelectorAll('[data-map]').forEach(x=>x.onclick=e=>{e.preventDefault();quickMap(op.provId,x.dataset.map);});
   const ge=$('#goEquiv'); if(ge)ge.onclick=e=>{e.preventDefault();state.view='equiv';render();};
   const ex=$('#exp'); if(ex)ex.onclick=()=>exportOC(op,r);
+  const fvp=$('#fvp'); if(fvp)fvp.onclick=()=>claimView(op,r);
   main.querySelectorAll('th.sortable').forEach(th=>th.onclick=()=>{ const c=th.dataset.sort; if(state.ocSort.col===c)state.ocSort.dir*=-1; else {state.ocSort.col=c; state.ocSort.dir=1;} render(); });
 }
 
@@ -800,6 +802,41 @@ function editFile(key,idx){
   renderItemsEdit(f.items, f.fileName+' — '+DOC_LABELS[key],
     async(items)=>{ f.items=items; recompute(key); await DB.put('ops',op); toast('Líneas actualizadas'); state.view='oc'; render(); },
     ()=>{ state.view='oc'; render(); });
+}
+function claimView(op,r){
+  const faltan = r.rows.filter(x=>x.hasFac&&x.hasPak&&x.qF>x.qK).map(x=>({shown:x.shown,desc:x.desc,qF:x.qF,qK:x.qK,priceF:x.priceF,falta:x.qF-x.qK,monto:(x.priceF!=null?(x.qF-x.qK)*x.priceF:null)}));
+  const sobran = r.rows.filter(x=>x.hasFac&&x.hasPak&&x.qK>x.qF).map(x=>({shown:x.shown,desc:x.desc,extra:x.qK-x.qF}));
+  const totUnid = faltan.reduce((a,b)=>a+b.falta,0);
+  const totMonto = faltan.reduce((a,b)=>a+(b.monto||0),0);
+  const hasMonto = faltan.some(x=>x.monto!=null);
+  const body=`<div class="mb">
+    <div class="grid3" style="padding:16px 22px;gap:12px">
+      <div class="kpi bad"><div class="v">${faltan.length}</div><div class="l">Ítems con faltante</div></div>
+      <div class="kpi bad"><div class="v">${totUnid}</div><div class="l">Unidades faltantes</div></div>
+      <div class="kpi ${hasMonto?'bad':''}"><div class="v">${hasMonto?'$'+totMonto.toFixed(2):'—'}</div><div class="l">Monto a reclamar (USD)</div></div>
+    </div>
+    ${faltan.length?`<div class="tblwrap" style="border:0;border-radius:0;box-shadow:none;max-height:44vh">
+      <table class="tbl"><thead><tr><th>Código</th><th>Descripción</th><th class="num">Facturado</th><th class="num">Empacado</th><th class="num">Faltante</th>${hasMonto?'<th class="num">Precio</th><th class="num">A reclamar</th>':''}</tr></thead>
+      <tbody>${faltan.map(x=>`<tr><td class="code">${esc(x.shown)}</td><td>${esc((x.desc||'').slice(0,38))}</td><td class="num">${x.qF}</td><td class="num">${x.qK}</td><td class="num" style="color:var(--bad);font-weight:700">${x.falta}</td>${hasMonto?`<td class="num">${x.priceF!=null?x.priceF.toFixed(2):'—'}</td><td class="num" style="font-weight:600">${x.monto!=null?'$'+x.monto.toFixed(2):'—'}</td>`:''}</tr>`).join('')}</tbody></table>
+    </div>`:`<div class="empty" style="padding:46px"><div class="ic">✓</div>Sin faltantes: todo lo facturado coincide con el packing.</div>`}
+    ${sobran.length?`<div style="padding:12px 22px;border-top:1px solid var(--line)"><div class="f" style="margin-bottom:8px">Llegó de más (empacado &gt; facturado)</div>${sobran.map(x=>`<div class="frow"><div class="fn">${esc(x.shown)} · ${esc((x.desc||'').slice(0,28))}</div><span class="pill warn">+${x.extra}</span></div>`).join('')}</div>`:''}
+  </div>`;
+  const inner=`
+    <div class="mh"><div><h3>Factura vs Packing — reclamo</h3><div class="sub">${esc(op.provName||'')} · ${esc(op.ref||'OC')}</div></div>
+      <button class="xbtn" id="mClose"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
+    ${body}
+    <div class="mf"><button class="btn primary sm" id="dlClaim" ${faltan.length?'':'disabled'}>⬇ Exportar reclamo</button><div class="grow"></div><button class="btn ghost sm" id="mClose2">Cerrar</button></div>`;
+  openModal(inner);
+  document.getElementById('mClose').onclick=closeModal;
+  document.getElementById('mClose2').onclick=closeModal;
+  const dc=document.getElementById('dlClaim'); if(faltan.length&&dc) dc.onclick=()=>exportClaim(op,faltan,hasMonto);
+}
+function exportClaim(op,faltan,hasMonto){
+  const head=hasMonto?['Codigo','Descripcion','Facturado','Empacado','Faltante','Precio','A reclamar (USD)']:['Codigo','Descripcion','Facturado','Empacado','Faltante'];
+  const aoa=[head]; faltan.forEach(x=>aoa.push(hasMonto?[x.shown,x.desc,x.qF,x.qK,x.falta,x.priceF!=null?x.priceF:'',x.monto!=null?x.monto:'']:[x.shown,x.desc,x.qF,x.qK,x.falta]));
+  if(hasMonto){const tot=faltan.reduce((a,b)=>a+(b.monto||0),0); aoa.push([]); aoa.push(['','','','','','TOTAL',tot]);}
+  const wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(aoa),'Reclamo');
+  XLSX.writeFile(wb,`reclamo_${(op.ref||op.id)}`.replace(/[^\w\-]/g,'_')+'.xlsx');
 }
 function docToExcel(doc,op,key,label){
   const hasPrice = doc.items.some(it=>it.price!=null && it.price!=='');

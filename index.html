@@ -341,10 +341,14 @@ async function readPDF(file){
     lines.forEach(l=>{
       const hm=l.match(/Cust Order No\.\s*(.+?)\s*$/i); if(hm){po=hm[1].trim();return;}
       const m=l.match(reRow); if(!m) return;
-      const toks=m[4].trim().split(/\s+/); const c1=toks[0]||'', c2=(toks[0]||'')+(toks[1]||''); let code,desc;
-      if(full7.test(c1)||patB.test(c1)){code=c1;desc=toks.slice(1).join(' ');}
-      else if(toks[1]&&(full7.test(c2)||patB.test(c2)||/^\d{6}$/.test(c2))){code=c2;desc=toks.slice(2).join(' ');}
-      else {code=c1;desc=toks.slice(1).join(' ');}
+      const toks=m[4].trim().split(/\s+/); let code,desc,ci=0;
+      if(toks.length && /^\d/.test(toks[0])){
+        // El proveedor parte el part number en posiciones arbitrarias y a veces con ceros
+        // a la izquierda; unimos TODOS los tokens iniciales que empiezan con dígito (la
+        // descripción siempre empieza con letra). canon() ignora luego los ceros a la izquierda.
+        const parts=[]; while(ci<toks.length && /^\d/.test(toks[ci])){ parts.push(toks[ci]); ci++; }
+        code=parts.join(''); desc=toks.slice(ci).join(' ');
+      } else { code=toks[0]||''; desc=toks.slice(1).join(' '); }
       guess.push({raw:l, ordered:m[1], qty:m[2], bo:m[3], code, desc, price:m[6], po});
     });
   }

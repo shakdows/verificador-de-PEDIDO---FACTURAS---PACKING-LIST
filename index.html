@@ -325,17 +325,33 @@ async function readPDF(file){
   }
   const full = lines.join('\n');
   const isCostex = /COSTEX/i.test(full);
-  let guess=[];
-  if(isCostex){
-    // COSTEX:  Pc/Sp  Qty  PartNo  Description  Checking(7d)  Lc(2d)  Order  Item  Cust.P.O.
-    // Tomamos solo Qty, PartNo, Description y Cust.P.O.  (el resto se ignora)
+  const isPacking = /PACKING LIST/i.test(full);
+  let guess=[]; let costexKind=null;
+  if(isCostex && isPacking){
+    // PACKING LIST COSTEX:  Pc/Sp  Qty  PartNo  Description  Checking  Lc  Order  Item  Cust.P.O.
+    costexKind='packing';
     const re=/^(\d+\/\d+)\s+(\d+)\s+(\S+)\s+(.+?)\s+(\d{7})\s+(\d{2})\s+(\d+)\s+(\d+)\s+(OC\b.*?)\s*$/;
     lines.forEach(l=>{ const m=l.match(re); if(m) guess.push({raw:l, qty:m[2], code:m[3], desc:m[4].trim(), po:m[9].trim()}); });
+  } else if(isCostex){
+    // FACTURA COSTEX:  Item Ordered Shipped B/O PartNo Description Ctr UnitPrice Extension
+    // Cantidad = SHIPPED ; Precio = UNIT PRICE ; se ignora Item, Ordered, Ctr y Extension
+    costexKind='invoice';
+    const reRow=/^\s*\d+\s+(\d+)\s+(\d+)\s+(\d+)\s+(.+?)\s+([A-Z]{2})\s+([\d,]*\.?\d+)\s+([\d,]*\.?\d+)\s*$/;
+    const full7=/^\d{7}$/, patB=/^[0-9][A-Z]\d{4}$/; let po='';
+    lines.forEach(l=>{
+      const hm=l.match(/Cust Order No\.\s*(.+?)\s*$/i); if(hm){po=hm[1].trim();return;}
+      const m=l.match(reRow); if(!m) return;
+      const toks=m[4].trim().split(/\s+/); const c1=toks[0]||'', c2=(toks[0]||'')+(toks[1]||''); let code,desc;
+      if(full7.test(c1)||patB.test(c1)){code=c1;desc=toks.slice(1).join(' ');}
+      else if(toks[1]&&(full7.test(c2)||patB.test(c2))){code=c2;desc=toks.slice(2).join(' ');}
+      else {code=c1;desc=toks.slice(1).join(' ');}
+      guess.push({raw:l, ordered:m[1], qty:m[2], bo:m[3], code, desc, price:m[6], po});
+    });
   }
   if(!guess.length){
     guess = lines.map(l=>{ const codeM=l.match(/\b([0-9][A-Z]?[0-9]{3,7}[A-Z]{0,4})\b/); return {raw:l, code:codeM?codeM[1]:'', qty:'', desc:l}; });
   }
-  return {kind:'pdf', rows:lines, guess, costex:isCostex};
+  return {kind:'pdf', rows:lines, guess, costex:isCostex, costexKind};
 }
 
 /* ============================================================
@@ -363,13 +379,16 @@ function buildIndex(items, provId){
   (items||[]).forEach(it=>{
     const r = Codes.resolveKey(it.code, provId, state.crossref);
     const k = r.key;
-    if(!idx[k]) idx[k] = {key:k, shown:r.shown, status:r.status, codes:new Set(), qty:0, price:null, desc:it.desc||''};
+    if(!idx[k]) idx[k] = {key:k, shown:r.shown, status:r.status, codes:new Set(), qty:0, price:null, desc:it.desc||'', parts:[]};
     idx[k].codes.add(Codes.norm(it.code));
     if(r.shown && r.shown.length>idx[k].shown.length) idx[k].shown=r.shown;
-    idx[k].qty += Number(it.qty)||0;
+    const q=Number(it.qty)||0;
+    idx[k].qty += q;
+    idx[k].parts.push({qty:q, price:(it.price!=null&&it.price!==''?Number(it.price):null)});
     if(it.price!=null && it.price!=='') idx[k].price = Number(it.price);
     if(!idx[k].desc && it.desc) idx[k].desc = it.desc;
   });
+  Object.values(idx).forEach(e=>{ e.breakdown=e.parts.map(p=>p.qty); const ps=new Set(e.parts.filter(p=>p.price!=null).map(p=>p.price)); e.mixedPrice=ps.size>1; });
   return idx;
 }
 function compare(idxA, idxB, labelA, labelB){
@@ -410,7 +429,9 @@ function ocReport(op){
     else {status='—';sev='mut';}
     const packDiff = (hasFac&&hasPak&&qF!==qK);
     if(unknown){ const c=[...(P?P.codes:F?F.codes:K.codes)][0]; unknowns[c]={code:c,desc,from:P?'pedido':F?'factura':'packing'}; }
-    rows.push({key:k,shown,desc,qP,qF,qK,back,status,sev,packDiff,unknown,hasPed,hasFac,hasPak});
+    const bdP=P?P.breakdown:null, bdF=F?F.breakdown:null, bdK=K?K.breakdown:null;
+    const mixedPrice=(P&&P.mixedPrice)||(F&&F.mixedPrice)||(K&&K.mixedPrice)||false;
+    rows.push({key:k,shown,desc,qP,qF,qK,back,status,sev,packDiff,unknown,hasPed,hasFac,hasPak,bdP,bdF,bdK,mixedPrice});
   });
   const order={bad:0,warn:1,mut:3,ok:2};
   rows.sort((a,b)=>order[a.sev]-order[b.sev]||b.back-a.back||a.shown.localeCompare(b.shown));
@@ -434,6 +455,7 @@ const main = $('#main');
 function toast(m){const t=$('#toast');t.textContent=m;t.classList.add('show');clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('show'),2200);}
 function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
 function sevPill(sev,txt){const m={ok:'ok',bad:'bad',warn:'warn',info:'info'};return `<span class="pill ${m[sev]||'mut'}">${esc(txt)}</span>`;}
+function fmtQty(q,bd){ return (bd&&bd.length>1) ? `${q}<div class="muted" style="font-size:10px;line-height:1.1">(${bd.join('+')})</div>` : `${q}`; }
 function crumb(parts){
   return `<div class="crumb">${parts.map((p,i)=>`${i?'<span class="sep">/</span>':''}${p.go?`<a href="#" data-crumb="${p.go}">${esc(p.t)}</a>`:`<span>${esc(p.t)}</span>`}`).join('')}</div>`;
 }
@@ -535,7 +557,7 @@ function vOC(){
       <div class="kpi ok"><div class="v">${completes}</div><div class="l">Completos</div></div>
       <div class="kpi ${packDiffs?'bad':''}"><div class="v">${packDiffs}</div><div class="l">Factura ≠ packing</div></div>
     </div>
-    <div class="sec-title">Estado del pedido <span class="muted small">qué te envían y qué queda en backorder</span><span class="ln"></span></div>
+    <div class="sec-title">Estado del pedido <span class="muted small">combina todos los archivos y sub-órdenes por código</span><span class="ln"></span></div>
     <div class="legend">
       <span><span class="flag" style="background:var(--ok)"></span>Completo</span>
       <span><span class="flag" style="background:var(--warn)"></span>Backorder parcial / extra</span>
@@ -554,11 +576,11 @@ function vOC(){
       ${sortRows(r.rows).map(x=>`<tr>
         <td class="code">${esc(x.shown)} ${x.unknown?`<a href="#" data-map="${esc(x.key[0]==='?'?x.key.slice(1):'')}" style="color:var(--info)">mapear</a>`:''}</td>
         <td>${esc((x.desc||'').slice(0,44))}</td>
-        <td class="num">${x.hasPed?x.qP:'—'}</td>
-        <td class="num">${x.hasFac?x.qF:'—'}</td>
-        <td class="num">${x.hasPak?x.qK:'—'}</td>
+        <td class="num">${x.hasPed?fmtQty(x.qP,x.bdP):'—'}</td>
+        <td class="num">${x.hasFac?fmtQty(x.qF,x.bdF):'—'}</td>
+        <td class="num">${x.hasPak?fmtQty(x.qK,x.bdK):'—'}</td>
         <td class="num" style="color:${x.back>0?'var(--warn)':'var(--ink3)'};font-weight:${x.back>0?'700':'400'}">${x.back>0?x.back:'0'}</td>
-        <td>${sevPill(x.sev,x.status)}${x.packDiff?' '+sevPill('bad','≠ packing'):''}</td>
+        <td>${sevPill(x.sev,x.status)}${x.packDiff?' '+sevPill('bad','≠ packing'):''}${x.mixedPrice?' '+sevPill('info','precio mixto'):''}</td>
       </tr>`).join('')}
     </tbody></table></div>`:''}`;
   bindCrumb();
@@ -603,10 +625,11 @@ async function startNext(){
     const isPdf=/\.pdf$/i.test(file.name);
     const parsed=isPdf?await readPDF(file):await readExcel(file);
     const raw=await fileToB64(file);
-    if(parsed.costex)toast('Formato COSTEX detectado');
+    if(parsed.costexKind==='invoice')toast('Factura COSTEX detectada'); else if(parsed.costexKind==='packing')toast('Packing COSTEX detectado');
     const label=file.name+' — '+DOC_LABELS[key];
+    const detectedPos=[...new Set((parsed.guess||[]).map(g=>g.po).filter(Boolean))];
     reviewParsed(parsed,label,
-      async(items)=>{ addFileToSlot(key,{fileName:file.name,mime:file.type||'',raw,items}); await DB.put('ops',state.cur); toast(items.length+' líneas añadidas'); startNext(); },
+      async(items)=>{ addFileToSlot(key,{fileName:file.name,mime:file.type||'',raw,items,pos:detectedPos}); await DB.put('ops',state.cur); toast(items.length+' líneas añadidas'); startNext(); },
       ()=>{ startNext(); });
   }catch(err){ console.error(err); toast('No se pudo leer '+file.name); startNext(); }
 }
@@ -651,22 +674,26 @@ function renderExcelReview(parsed,label,onConfirm,onCancel){
     onConfirm(items);};
 }
 function renderPdfReview(parsed,label,onConfirm,onCancel){
-  const init=parsed.guess.filter(g=>g.code).map(g=>({code:g.code,desc:(g.desc||'').slice(0,60),qty:g.qty||''}));
+  const init=parsed.guess.filter(g=>g.code).map(g=>({code:g.code,desc:(g.desc||'').slice(0,60),qty:g.qty||'',price:(g.price!=null?g.price:undefined),ordered:(g.ordered!=null?g.ordered:undefined),bo:(g.bo!=null?g.bo:undefined)}));
   const rows=init.length?init:[{code:'',desc:'',qty:''}];
   const pos=[...new Set(parsed.guess.map(g=>g.po).filter(Boolean))];
-  const sub = parsed.costex
-    ? `Formato <b>COSTEX</b> detectado: ${init.length} líneas leídas automáticamente (Qty · Part No · Description).${pos.length?' Pedido(s): <b>'+pos.map(esc).join(', ')+'</b>.':''} Revisa y confirma.`
-    : `Lectura aproximada del PDF. Corrige códigos y escribe las cantidades.`;
+  const posTxt = pos.length?' Pedido(s): <b>'+pos.map(esc).join(', ')+'</b>.':'';
+  const sub = parsed.costexKind==='packing'
+      ? `Packing <b>COSTEX</b> detectado: ${init.length} líneas (Cantidad = Qty).${posTxt} Revisa y confirma.`
+    : parsed.costexKind==='invoice'
+      ? `Factura <b>COSTEX</b> detectada: ${init.length} líneas (Cantidad = <b>SHIPPED</b>, Precio = <b>UNIT PRICE</b>).${posTxt} Revisa y confirma.`
+      : `Lectura aproximada del PDF. Corrige códigos y escribe las cantidades.`;
   buildGrid(label,rows,sub,
     `<details class="panel"><summary class="muted small" style="cursor:pointer">Ver texto crudo extraído (${parsed.rows.length} líneas)</summary><pre style="white-space:pre-wrap;font-family:var(--mono);font-size:11px;color:var(--ink2);max-height:300px;overflow:auto;margin-top:12px">${esc(parsed.rows.join('\n'))}</pre></details>`,
     onConfirm,onCancel);
 }
 function renderItemsEdit(items,label,onConfirm,onCancel){
-  const rows=items.map(i=>({code:i.code,desc:i.desc||'',qty:i.qty}));
+  const rows=items.map(i=>({code:i.code,desc:i.desc||'',qty:i.qty,price:(i.price!=null?i.price:undefined),ordered:(i.ordered!=null?i.ordered:undefined),bo:(i.bo!=null?i.bo:undefined)}));
   buildGrid(label,rows.length?rows:[{code:'',desc:'',qty:''}],`Edita las líneas guardadas.`,'',onConfirm,onCancel);
 }
 function buildGrid(label,rows,subtitle,extra,onConfirm,onCancel){
-  const grid=()=>`<table class="tbl editgrid"><thead><tr><th style="width:170px">Código</th><th>Descripción</th><th style="width:110px">Cantidad</th><th style="width:40px"></th></tr></thead><tbody id="pgrid">${rows.map((r,i)=>pdfRow(r,i)).join('')}</tbody></table>`;
+  const hasPrice = rows.some(r=>r.price!=null && r.price!=='');
+  const grid=()=>`<table class="tbl editgrid"><thead><tr><th style="width:160px">Código</th><th>Descripción</th><th style="width:90px">Cantidad</th>${hasPrice?'<th style="width:90px">Precio</th>':''}<th style="width:40px"></th></tr></thead><tbody id="pgrid">${rows.map((r,i)=>pdfRow(r,i,hasPrice)).join('')}</tbody></table>`;
   main.innerHTML=`
     <div class="head"><div class="kicker">Revisión · ${esc(label)}</div><h2>Confirma las líneas</h2><p>${subtitle}</p></div>
     <div class="panel" style="margin-bottom:16px">
@@ -676,18 +703,19 @@ function buildGrid(label,rows,subtitle,extra,onConfirm,onCancel){
     </div>${extra}`;
   const bind=()=>{main.querySelectorAll('#pgrid input').forEach(inp=>inp.oninput=e=>{rows[+e.target.dataset.i][e.target.dataset.f]=e.target.value;});
     main.querySelectorAll('#pgrid [data-del]').forEach(b=>b.onclick=()=>{rows.splice(+b.dataset.del,1);refresh();});};
-  const refresh=()=>{$('#pgrid').innerHTML=rows.map((r,i)=>pdfRow(r,i)).join('');bind();};
+  const refresh=()=>{$('#pgrid').innerHTML=rows.map((r,i)=>pdfRow(r,i,hasPrice)).join('');bind();};
   bind();
-  $('#addRow').onclick=()=>{rows.push({code:'',desc:'',qty:''});refresh();};
+  $('#addRow').onclick=()=>{rows.push({code:'',desc:'',qty:'',price:hasPrice?'':undefined});refresh();};
   $('#cancelRev').onclick=()=>onCancel();
-  $('#confirmGrid').onclick=()=>{const items=rows.filter(r=>String(r.code).trim()).map(r=>({code:r.code.trim(),desc:r.desc,qty:parseFloat(String(r.qty).replace(',','.'))||0,price:null}));
+  $('#confirmGrid').onclick=()=>{const items=rows.filter(r=>String(r.code).trim()).map(r=>{const o={code:r.code.trim(),desc:r.desc,qty:parseFloat(String(r.qty).replace(',','.'))||0,price: hasPrice ? (r.price===''||r.price==null?null:(parseFloat(String(r.price).replace(',','.'))||null)) : null}; if(r.ordered!=null&&r.ordered!=='')o.ordered=parseFloat(String(r.ordered).replace(',','.'))||0; if(r.bo!=null&&r.bo!=='')o.bo=parseFloat(String(r.bo).replace(',','.'))||0; return o;});
     if(!items.length){toast('Agrega al menos una línea con código');return;}
     onConfirm(items);};
 }
-function pdfRow(r,i){return `<tr>
+function pdfRow(r,i,hasPrice){return `<tr>
   <td><input class="codecol" data-i="${i}" data-f="code" value="${esc(r.code)}"></td>
   <td><input data-i="${i}" data-f="desc" value="${esc(r.desc)}"></td>
   <td><input data-i="${i}" data-f="qty" value="${esc(r.qty)}" style="text-align:right;font-family:var(--mono)"></td>
+  ${hasPrice?`<td><input data-i="${i}" data-f="price" value="${esc(r.price==null?'':r.price)}" style="text-align:right;font-family:var(--mono)"></td>`:''}
   <td><button class="btn ghost sm" data-del="${i}" style="padding:4px 9px">✕</button></td></tr>`;}
 
 function quickMap(provId,alien){
@@ -705,9 +733,29 @@ function openModal(inner){
   bg.onclick=e=>{ if(e.target===bg) closeModal(); };
   document.body.appendChild(bg); return bg;
 }
+function groupForView(items){
+  const map={}, order=[];
+  (items||[]).forEach(it=>{
+    const base=Codes.split(Codes.norm(it.code)).base; const ck=Codes.canon(base);
+    const pk=(it.price!=null&&it.price!=='')?(+it.price).toFixed(2):'';
+    const gk=ck+'|'+pk;
+    if(!map[gk]){ map[gk]={code:it.code||base, desc:it.desc||'', price:(pk===''?null:+it.price), qtys:[], ordered:0, bo:0, ck}; order.push(gk); }
+    const g=map[gk];
+    if(it.code && String(it.code).length>String(g.code).length) g.code=it.code;
+    if(!g.desc && it.desc) g.desc=it.desc;
+    g.qtys.push(Number(it.qty)||0);
+    if(it.ordered!=null) g.ordered+=Number(it.ordered)||0;
+    if(it.bo!=null) g.bo+=Number(it.bo)||0;
+  });
+  const cnt={}; order.forEach(gk=>{cnt[map[gk].ck]=(cnt[map[gk].ck]||0)+1;});
+  const groups=order.map(gk=>map[gk]); groups.forEach(g=>g.mixed=cnt[g.ck]>1);
+  groups.sort((a,b)=>String(a.code).localeCompare(String(b.code),undefined,{numeric:true}));
+  return groups;
+}
 function viewDoc(key){
   const op=state.cur; const doc=op.docs[key]; if(!doc||!doc.files||!doc.files.length)return;
   const files=doc.files;
+  const allPos=[...new Set(files.flatMap(f=>f.pos||[]))];
   const hasPrice = doc.items.some(it=>it.price!=null && it.price!=='');
   const filesList = `<div style="padding:14px 22px;border-bottom:1px solid var(--line)">
     <div class="f" style="margin-bottom:9px">Archivos (${files.length})</div>
@@ -718,9 +766,13 @@ function viewDoc(key){
       <button class="btn ghost sm" data-fx="${i}">✕</button>
     </div>`).join('')}
   </div>`;
-  const body = `<div class="mb">${filesList}<div class="tblwrap" style="border:0;border-radius:0;box-shadow:none;max-height:48vh">
-    <table class="tbl"><thead><tr><th style="width:40px">#</th><th>Código</th><th>Descripción</th><th class="num">Cantidad</th>${hasPrice?'<th class="num">Precio</th>':''}</tr></thead>
-    <tbody>${doc.items.map((it,i)=>`<tr><td class="muted">${i+1}</td><td class="code">${esc(it.code)}</td><td>${esc(it.desc||'')}</td><td class="num">${it.qty}</td>${hasPrice?`<td class="num">${it.price==null||it.price===''?'—':it.price}</td>`:''}</tr>`).join('')}</tbody></table>
+  const combo = allPos.length>1?`<div class="note" style="margin:0;border-radius:0;border-top:0;border-left:0;border-right:0"><span class="ni">${ICON.info}</span><div>Combina <b>${allPos.length}</b> sub-órdenes en una sola comparación: <b>${allPos.map(esc).join(', ')}</b>. Las cantidades se suman por código.</div></div>`:'';
+  const groups=groupForView(doc.items);
+  const hasOrdered=doc.items.some(it=>it.ordered!=null);
+  const body = `<div class="mb">${combo}${filesList}<div class="tblwrap" style="border:0;border-radius:0;box-shadow:none;max-height:48vh">
+    <table class="tbl"><thead><tr><th>Código</th><th>Descripción</th>${hasOrdered?'<th class="num">Pedido</th>':''}<th class="num">${hasOrdered?'Llega':'Cantidad'}</th>${hasOrdered?'<th class="num">B/O</th>':''}${hasPrice?'<th class="num">Precio</th>':''}</tr></thead>
+    <tbody>${groups.map(g=>{const sum=g.qtys.reduce((a,b)=>a+b,0); const det=g.qtys.length>1?`<div class="muted" style="font-size:10px;line-height:1.1">(${g.qtys.join('+')})</div>`:'';
+      return `<tr><td class="code">${esc(g.code)} ${g.mixed?'<span class="pill warn" style="padding:1px 6px">precio dist.</span>':''}</td><td>${esc((g.desc||'').slice(0,40))}</td>${hasOrdered?`<td class="num">${g.ordered}</td>`:''}<td class="num">${sum}${det}</td>${hasOrdered?`<td class="num" style="color:${g.bo>0?'var(--bad)':'var(--ink3)'}">${g.bo}</td>`:''}${hasPrice?`<td class="num">${g.price==null?'—':g.price.toFixed(2)}</td>`:''}</tr>`;}).join('')}</tbody></table>
   </div></div>`;
   const inner = `
     <div class="mh">

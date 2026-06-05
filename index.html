@@ -343,7 +343,7 @@ async function readPDF(file){
       const m=l.match(reRow); if(!m) return;
       const toks=m[4].trim().split(/\s+/); const c1=toks[0]||'', c2=(toks[0]||'')+(toks[1]||''); let code,desc;
       if(full7.test(c1)||patB.test(c1)){code=c1;desc=toks.slice(1).join(' ');}
-      else if(toks[1]&&(full7.test(c2)||patB.test(c2))){code=c2;desc=toks.slice(2).join(' ');}
+      else if(toks[1]&&(full7.test(c2)||patB.test(c2)||/^\d{6}$/.test(c2))){code=c2;desc=toks.slice(2).join(' ');}
       else {code=c1;desc=toks.slice(1).join(' ');}
       guess.push({raw:l, ordered:m[1], qty:m[2], bo:m[3], code, desc, price:m[6], po});
     });
@@ -425,6 +425,11 @@ function ocReport(op){
       else if(qF<qP){status='Backorder parcial';sev='warn';}
       else if(qF>qP){status='Enviado de más';sev='warn';}
       else{status='Completo';sev='ok';}
+    } else if(!hasPed && hasFac && hasPak){
+      if(qF>qK){status='Falta en packing';sev='bad';}
+      else if(qK>qF){status='De más en packing';sev='warn';}
+      else if(qF>0){status='Fact = packing';sev='ok';}
+      else {status='—';sev='mut';}
     } else if(qF>0){status='Extra (no pedido)';sev='warn';}
     else {status='—';sev='mut';}
     const packDiff = (hasFac&&hasPak&&qF!==qK);
@@ -537,6 +542,9 @@ function vOC(){
   const pedidas=r.rows.filter(x=>x.qP>0).length;
   const completes=r.rows.filter(x=>x.hasPed&&x.qP>0&&x.qF>=x.qP&&x.hasFac).length;
   const packDiffs=r.rows.filter(x=>x.packDiff).length;
+  const faltaPk=r.rows.filter(x=>x.hasFac&&x.hasPak&&x.qF>x.qK).length;
+  const demasPk=r.rows.filter(x=>x.hasFac&&x.hasPak&&x.qK>x.qF).length;
+  const okPk=r.rows.filter(x=>x.hasFac&&x.hasPak&&x.qF===x.qK&&x.qF>0).length;
   const arrow=c=>state.ocSort.col===c?`<span class="ar">${state.ocSort.dir>0?'▲':'▼'}</span>`:'';
   main.innerHTML = `
     ${crumb([{t:'Proveedores',go:'prov'},{t:p?p.name:'',go:'provDetail'},{t:op.ref||'OC'}])}
@@ -551,14 +559,20 @@ function vOC(){
     </div>
     ${(!r.hasPed&&r.hasFac&&r.hasPak)?`<div class="note" style="margin-top:18px"><span class="ni">${ICON.info}</span><div>Sin <b>pedido</b> cargado no se calcula el backorder del pedido, pero ya puedes usar <b>Factura vs Packing</b> (botón arriba) para ver qué te facturaron de más respecto a lo que llegó.</div></div>`:(!r.hasPed?`<div class="note" style="margin-top:18px"><span class="ni">${ICON.info}</span><div>Sube primero el <b>pedido/confirmación</b> para calcular el backorder. La factura y el packing los adjuntas después.</div></div>`:'')}
     ${r.unknowns.length?`<div class="note" style="margin-top:14px"><span class="ni">${ICON.info}</span><div><b>${r.unknowns.length} código(s) sin equivalencia.</b> Mapéalos en <a href="#" id="goEquiv" style="color:var(--link)">Equivalencias</a> para que coincidan con tu código SAP.</div></div>`:''}
-    ${r.hasPed?`
-    <div class="grid4" style="margin:20px 0 8px">
+    ${(r.hasPed||(r.hasFac&&r.hasPak))?`
+    ${r.hasPed?`<div class="grid4" style="margin:20px 0 8px">
       <div class="kpi"><div class="v">${pedidas}</div><div class="l">Ítems pedidos</div></div>
       <div class="kpi ${backRows.length?'warn':'ok'}"><div class="v">${backRows.length}</div><div class="l">En backorder</div></div>
       <div class="kpi ok"><div class="v">${completes}</div><div class="l">Completos</div></div>
       <div class="kpi ${packDiffs?'bad':''}"><div class="v">${packDiffs}</div><div class="l">Factura ≠ packing</div></div>
     </div>
-    <div class="sec-title">Estado del pedido <span class="muted small">combina todos los archivos y sub-órdenes por código</span><span class="ln"></span></div>
+    <div class="sec-title">Estado del pedido <span class="muted small">combina todos los archivos y sub-órdenes por código</span><span class="ln"></span></div>`
+    :`<div class="grid3" style="margin:20px 0 8px">
+      <div class="kpi ${faltaPk?'bad':'ok'}"><div class="v">${faltaPk}</div><div class="l">Falta en packing</div></div>
+      <div class="kpi ${demasPk?'warn':''}"><div class="v">${demasPk}</div><div class="l">Llegó de más</div></div>
+      <div class="kpi ok"><div class="v">${okPk}</div><div class="l">Factura = packing</div></div>
+    </div>
+    <div class="sec-title">Factura vs Packing <span class="muted small">lo facturado (lo que llega) contra lo realmente embarcado, por código</span><span class="ln"></span></div>`}
     <div class="legend">
       <span><span class="flag" style="background:var(--ok)"></span>Completo</span>
       <span><span class="flag" style="background:var(--warn)"></span>Backorder parcial / extra</span>
@@ -580,7 +594,7 @@ function vOC(){
         <td class="num">${x.hasPed?fmtQty(x.qP,x.bdP):'—'}</td>
         <td class="num">${x.hasFac?fmtQty(x.qF,x.bdF):'—'}</td>
         <td class="num">${x.hasPak?fmtQty(x.qK,x.bdK):'—'}</td>
-        <td class="num" style="color:${x.back>0?'var(--warn)':'var(--ink3)'};font-weight:${x.back>0?'700':'400'}">${x.back>0?x.back:'0'}</td>
+        <td class="num" style="color:${x.back>0?'var(--warn)':'var(--ink3)'};font-weight:${x.back>0?'700':'400'}">${x.hasPed?(x.back>0?x.back:'0'):'—'}</td>
         <td>${sevPill(x.sev,x.status)}${x.packDiff?' '+sevPill('bad','≠ packing'):''}${x.mixedPrice?' '+sevPill('info','precio mixto'):''}</td>
       </tr>`).join('')}
     </tbody></table></div>`:''}`;
